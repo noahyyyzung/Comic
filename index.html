@@ -859,7 +859,7 @@ const REGION_DEFS = {
   side: [['Head', 'head', '#ff4d4d'], ['Body', 'torso', '#ffd23f'], ['Upper arm', 'uArm', '#2ec5ea'], ['Lower arm', 'lArm', '#2350d8'], ['Upper leg', 'uLeg', '#ff8a2a'], ['Lower leg', 'lLeg', '#8a3a10']]
 };
 REGION_DEFS.back = REGION_DEFS.front.map(([n, p, c]) => [n, p.endsWith('R') ? p.slice(0, -1) + 'L' : p.endsWith('L') ? p.slice(0, -1) + 'R' : p, c]);
-function segmentView(src, key, view, region) {
+function segmentView(src, key, view, region, labOnly) {
   const T = makeTemplate(key), bones = T.bones[view]; const c = src.getContext('2d'); const id = c.getImageData(0, 0, CW, CHH), d = id.data;
   let rd = null, rmap = null; if (region) { rd = region.getContext('2d').getImageData(0, 0, CW, CHH).data; rmap = REGION_DEFS[view].map(([, part, col]) => [hex(col).map(v => v * 255), bones.findIndex(B => B.part === part)]); }
   const lab = new Int8Array(CW * CHH).fill(-1); const nb = bones.length;
@@ -875,6 +875,7 @@ function segmentView(src, key, view, region) {
     else if (tIdx >= 0 && !(rd && rd[i * 4 + 3] > 100)) { const TB = bones[tIdx]; if (segT(x, y, TB.a, TB.b)[0] < TB.r * 0.98) stolen.push(i); }
     lab[i] = best; const q = bb[best]; if (x < q[0]) q[0] = x; if (y < q[1]) q[1] = y; if (x > q[2]) q[2] = x; if (y > q[3]) q[3] = y;
   }
+  if (labOnly) return { lab, bones };
   // inpaint torso behind limbs: copy nearest torso pixel on the same row
   const fill = new Map();
   if (tIdx >= 0) for (const i of stolen) { const y = (i / CW) | 0, x = i % CW; let src = -1; for (let r = 1; r < 90 && src < 0; r++) { for (const xx of [x - r, x + r]) { if (xx < 0 || xx >= CW) continue; const j = y * CW + xx; if (lab[j] === tIdx) { src = j; break; } } } if (src >= 0) fill.set(i, src); }
@@ -1022,13 +1023,17 @@ function drawPuppet(c, cid, view, pose, x, y, h, flip = false, rot = 0, opts = {
   const V = variantParts(rig, view, opts.expr, hands);
   const look = view === 'front' ? (opts.look || 0) : 0; const SV = look ? variantParts(rig, 'side', opts.expr, hands) : null;
   const cur = c.getTransform ? domToA(c.getTransform()) : A2.id();
+  const gear = opts.gear !== undefined ? opts.gear : ch.gear; const GR = hasAnyGear(gear) ? gear : null; const gl = opts.onLoad || (() => { STUDIO.boardDirty = true; STUDIO.standeeDirty = true; });
+  if (GR) gearBackFirst(c, cur, M, T, view, GR, gl);
   for (const [mk, pk, dark] of order) {
+    if (GR) gearPass(c, cur, M, T, view, GR, mk, 'pre', dark, gl, base);
     let part = V.parts[pk], m = A2.mul(cur, M[mk]);
     if (pk === 'head' && SV && SV.parts.head) { part = SV.parts.head; m = A2.mul(m, A2.mul(A2.t(T.P.neck[0], T.P.neck[1]), A2.mul(A2.s(look < 0 ? -1 : 1, 1), A2.t(-T.S.neck[0], -T.S.neck[1])))); }
-    if (!part) continue;
+    if (!part) { if (GR) gearPass(c, cur, M, T, view, GR, mk, 'post', dark, gl, base); continue; }
     c.save(); c.setTransform(m[0], m[1], m[2], m[3], m[4], m[5]);
     if (dark) c.filter = 'brightness(72%)';
     c.drawImage(part.img, part.ox, part.oy); c.restore();
+    if (GR) gearPass(c, cur, M, T, view, GR, mk, 'post', dark, gl, base);
   }
   return { M, T, base };
 }
@@ -1212,7 +1217,8 @@ const FX = [
   { k: 'hearts', n: 'Hearts', c: '#ff5c8a' }, { k: 'sweat', n: 'Sweat Drops', c: '#7fd0ff' }, { k: 'anger', n: 'Anger Mark', c: '#ef3b36' }, { k: 'glint', n: 'Glint', c: '#ffffff' },
   { k: 'portal', n: 'Portal', c: '#8a5cf0' }, { k: 'tornado', n: 'Tornado', c: '#a9b0bd' }, { k: 'splash', n: 'Splash', c: '#3fa4ff' }, { k: 'crack', n: 'Ground Crack', c: '#6b4a2f' },
   { k: 'zzz', n: 'Zzz', c: '#7fb6ff' }, { k: 'notes', n: 'Music Notes', c: '#ff6fb1' }, { k: 'wind', n: 'Wind', c: '#cfe6ff' }, { k: 'halo', n: 'Halo', c: '#ffd23f' },
-  { k: 'confetti', n: 'Confetti', c: '#ff6fb1' }, { k: 'firering', n: 'Fire Ring', c: '#ff5a1f' }
+  { k: 'confetti', n: 'Confetti', c: '#ff6fb1' }, { k: 'firering', n: 'Fire Ring', c: '#ff5a1f' },
+  { k: 'slash', n: 'Sword Slash', c: '#bfefff' }, { k: 'muzzle', n: 'Muzzle Flash', c: '#ffd23f' }, { k: 'laser', n: 'Laser Bolt', c: '#ff3b6b' }, { k: 'arrow', n: 'Flying Arrow', c: '#8a5a2b' }, { k: 'block', n: 'Shield Block', c: '#2ec5ea' }
 ];
 function star(c, x, y, n, r1, r2, rot = 0) { c.beginPath(); for (let i = 0; i < n * 2; i++) { const a = rot + i / (n * 2) * TAU, r = i % 2 ? r2 : r1; c.lineTo(x + Math.cos(a) * r, y + Math.sin(a) * r); } c.closePath(); }
 function fxDraw(c, k, s, col, seed = 3) {
@@ -1237,6 +1243,23 @@ function fxDraw(c, k, s, col, seed = 3) {
     case 'impact': star(c, 0, 0, 12, s, s * 0.45, R()); c.fillStyle = col; c.fill(); c.stroke(); star(c, 0, 0, 10, s * 0.6, s * 0.3, R()); c.fillStyle = '#fff'; c.fill(); for (let i = 0; i < 10; i++) { const a = i / 10 * TAU; c.beginPath(); c.moveTo(Math.cos(a) * s * 1.05, Math.sin(a) * s * 1.05); c.lineTo(Math.cos(a) * s * 1.3, Math.sin(a) * s * 1.3); c.stroke(); } break;
     case 'rain': c.strokeStyle = col; c.lineWidth = s * 0.02; for (let i = 0; i < 60; i++) { const xx = (R() - 0.5) * 2 * s, yy = (R() - 0.5) * 2 * s; c.beginPath(); c.moveTo(xx, yy); c.lineTo(xx - s * 0.06, yy + s * 0.18); c.stroke(); } break;
     case 'snow': c.fillStyle = col; for (let i = 0; i < 50; i++) { const xx = (R() - 0.5) * 2 * s, yy = (R() - 0.5) * 2 * s; c.beginPath(); c.arc(xx, yy, s * (0.015 + R() * 0.025), 0, TAU); c.fill(); } break;
+    case 'slash': { const arc = (r0, r1, a0, a1) => { c.beginPath(); c.arc(0, 0, r1, a0, a1); for (let i = 20; i >= 0; i--) { const t = i / 20, a = a0 + (a1 - a0) * t, r = lerp(r1, r0, Math.sin(t * PI) * 0.9 + 0.1); c.lineTo(Math.cos(a) * r, Math.sin(a) * r); } c.closePath(); };
+      c.save(); c.shadowColor = col; c.shadowBlur = s * 0.3; arc(s * 0.62, s, -PI * 0.95, PI * 0.1); c.fillStyle = col; c.fill(); c.restore(); c.stroke(); arc(s * 0.82, s * 0.97, -PI * 0.85, PI * 0.02); c.fillStyle = '#fff'; c.fill();
+      c.lineWidth = lw * 0.8; for (let i = 0; i < 3; i++) { const a = -PI * (0.75 - i * 0.25); c.beginPath(); c.arc(0, 0, s * (0.5 - i * 0.05), a, a + 0.5); c.stroke(); }
+      for (let i = 0; i < 4; i++) { const a = PI * 0.1 + R() * 0.3; star(c, Math.cos(a) * s * (0.9 + R() * 0.2), Math.sin(a) * s * (0.9 + R() * 0.2), 4, s * 0.09, s * 0.025); c.fillStyle = '#fff'; c.fill(); } break; }
+    case 'muzzle': star(c, 0, 0, 9, s, s * 0.35, -PI / 2 + 0.1); c.fillStyle = lighten(col, -0.15); c.fill(); c.stroke(); star(c, s * 0.05, 0, 7, s * 0.62, s * 0.24, 0); c.fillStyle = '#fff36b'; c.fill(); c.beginPath(); c.arc(0, 0, s * 0.2, 0, TAU); c.fillStyle = '#fff'; c.fill();
+      for (let i = 0; i < 4; i++) { const a = (R() - 0.5) * 1.4; c.beginPath(); c.moveTo(Math.cos(a) * s * 1.05, Math.sin(a) * s * 1.05); c.lineTo(Math.cos(a) * s * 1.35, Math.sin(a) * s * 1.35); c.stroke(); }
+      c.fillStyle = 'rgba(200,200,200,.8)'; for (let i = 0; i < 3; i++) { c.beginPath(); c.arc(-s * (0.5 + i * 0.25), -s * (0.5 + i * 0.2), s * (0.14 + i * 0.05), 0, TAU); c.fill(); } break;
+    case 'laser': for (let i = 0; i < 3; i++) { const x = -s + i * s * 0.75; c.save(); c.shadowColor = col; c.shadowBlur = s * 0.25; c.fillStyle = col; rr(c, x, -s * 0.09, s * 0.55, s * 0.18, s * 0.09); c.fill(); c.restore(); c.fillStyle = '#fff'; rr(c, x + s * 0.06, -s * 0.035, s * 0.43, s * 0.07, s * 0.035); c.fill(); }
+      c.lineWidth = lw * 0.6; c.strokeStyle = col; for (let i = 0; i < 4; i++) { const y = (R() - 0.5) * s * 0.5; c.beginPath(); c.moveTo(-s * 1.3, y); c.lineTo(-s * 1.05, y); c.stroke(); } break;
+    case 'arrow': c.lineWidth = lw * 0.7; for (let i = 0; i < 4; i++) { const y = (i - 1.5) * s * 0.1; c.beginPath(); c.moveTo(-s * 1.4 + R() * s * 0.2, y); c.lineTo(-s * 0.95, y); c.stroke(); }
+      c.lineWidth = s * 0.09; c.strokeStyle = ink; c.beginPath(); c.moveTo(-s * 0.85, 0); c.lineTo(s * 0.7, 0); c.stroke(); c.lineWidth = s * 0.05; c.strokeStyle = col; c.stroke();
+      c.beginPath(); c.moveTo(s * 1.0, 0); c.lineTo(s * 0.65, -s * 0.14); c.lineTo(s * 0.7, 0); c.lineTo(s * 0.65, s * 0.14); c.closePath(); c.fillStyle = '#c0c7d6'; c.fill(); c.lineWidth = lw; c.strokeStyle = ink; c.stroke();
+      for (const sg of [-1, 1]) { c.beginPath(); c.moveTo(-s * 0.55, 0); c.lineTo(-s * 0.85, sg * s * 0.16); c.lineTo(-s * 0.95, sg * s * 0.16); c.lineTo(-s * 0.75, 0); c.closePath(); c.fillStyle = '#ef3b36'; c.fill(); c.stroke(); } break;
+    case 'block': { c.save(); c.globalAlpha = 0.45; c.beginPath(); c.ellipse(0, 0, s * 0.95, s * 1.05, 0, -PI * 0.5, PI * 0.5); c.lineTo(0, s * 1.05); c.closePath(); c.fillStyle = col; c.fill(); c.restore();
+      c.lineWidth = lw * 1.4; c.strokeStyle = col; c.beginPath(); c.ellipse(0, 0, s * 0.95, s * 1.05, 0, -PI * 0.5, PI * 0.5); c.stroke(); c.lineWidth = lw * 0.6; c.strokeStyle = '#fff'; c.beginPath(); c.ellipse(0, 0, s * 0.85, s * 0.95, 0, -PI * 0.35, PI * 0.1); c.stroke();
+      for (let i = 0; i < 8; i++) { const a = (i / 7 - 0.5) * PI * 0.9; c.lineWidth = lw; c.strokeStyle = ink; c.beginPath(); c.moveTo(Math.cos(a) * s * 1.1, Math.sin(a) * s * 1.15); c.lineTo(Math.cos(a) * s * 1.4, Math.sin(a) * s * 1.45); c.stroke(); }
+      star(c, s * 0.95, -s * 0.1, 8, s * 0.32, s * 0.12, 0.2); c.fillStyle = '#fff36b'; c.fill(); c.stroke(); break; }
     case 'beam': { c.save(); c.shadowColor = col; c.shadowBlur = s * 0.25; c.fillStyle = col; rr(c, -s, -s * 0.16, s * 2, s * 0.32, s * 0.16); c.fill(); c.restore(); c.fillStyle = '#fff'; rr(c, -s, -s * 0.06, s * 2, s * 0.12, s * 0.06); c.fill(); break; }
     case 'stars': for (let i = 0; i < 5; i++) { const a = i / 5 * TAU; star(c, Math.cos(a) * s * 0.7, Math.sin(a) * s * 0.25, 5, s * 0.2, s * 0.09, a); c.fillStyle = col; c.fill(); c.stroke(); } c.strokeStyle = ink; c.lineWidth = lw * 0.7; c.beginPath(); c.ellipse(0, 0, s * 0.7, s * 0.25, 0, 0, TAU); c.setLineDash([s * 0.08, s * 0.08]); c.stroke(); c.setLineDash([]); break;
     case 'hearts': for (let i = 0; i < 5; i++) { const xx = (R() - 0.5) * s * 1.4, yy = (R() - 0.5) * s * 1.4, r = s * (0.15 + R() * 0.15); c.beginPath(); c.moveTo(xx, yy + r * 0.9); c.bezierCurveTo(xx - r * 1.6, yy - r * 0.2, xx - r * 0.6, yy - r * 1.3, xx, yy - r * 0.4); c.bezierCurveTo(xx + r * 0.6, yy - r * 1.3, xx + r * 1.6, yy - r * 0.2, xx, yy + r * 0.9); c.fillStyle = col; c.fill(); c.stroke(); } break;
@@ -1443,7 +1466,7 @@ function renderPage(c, comic, page, W, H, opts = {}) {
       if (e.hidden) return;
       const ex = px + e.x * pw, ey = py + e.y * ph;
       c.save(); c.translate(ex, ey);
-      if (e.t === 'char') { drawPuppet(c, e.cid, e.view || 'front', e.pose || { f: {}, s: {} }, 0, 0, (e.s || 0.3) * unit, !!e.flip, (e.r || 0) * D2R, { expr: e.expr, hands: resolveHands(e), look: e.look || 0 }); }
+      if (e.t === 'char') { drawPuppet(c, e.cid, e.view || 'front', e.pose || { f: {}, s: {} }, 0, 0, (e.s || 0.3) * unit, !!e.flip, (e.r || 0) * D2R, { expr: e.expr, hands: resolveHands(e), look: e.look || 0, gear: e.gear, onLoad: opts.onLoad }); }
       else {
         c.rotate((e.r || 0) * D2R); if (e.flip) c.scale(-1, 1); elemGlow(c, e, unit);
         if (e.t === 'fx') { c.globalAlpha = e.a ?? 1; fxDraw(c, e.k, (e.s || 1) * unit * 0.12, e.col, e.seed || 3); c.globalAlpha = 1; }
@@ -2773,9 +2796,9 @@ function drawTopBar(c, P) {
 }
 function setStudioMode(m) { STUDIO.mode = m; DRAW.active = false; if (m === 'comics' && !CO.comic) openComic(GAME.state.comics.find(c => !c.published) || null); [STUDIO.top, STUDIO.board, STUDIO.left, STUDIO.right].forEach(p => p.refresh()); STUDIO.boardDirty = true; updateDrawLayer(); }
 // ---------- draw tools ----------
-function drawTarget() { if (STUDIO.mode === 'chars' && (CH.sub === 'faces' || CH.sub === 'hands' || CH.sub === 'regions')) return wsDrawTarget(); if (STUDIO.mode === 'chars' && (CH.sub === 'draw' || CH.sub === 'body')) return { c: CH.canv[CH.view], undo: CH.undo[CH.view], redo: CH.redo[CH.view], mirror: DRAW.mirror && CH.view !== 'side', mask: DRAW.inLines ? silhouetteMask(draftKey(), CH.view) : null }; if (CO.sketch) return { c: CO.sketch.c, undo: CO.sketch.undo, redo: CO.sketch.redo, mirror: DRAW.mirror }; if (CO.ink && CO.inkC) return { c: CO.inkC, undo: CO.inkUndo, redo: CO.inkRedo, mirror: false }; return null; }
+function drawTarget() { if (STUDIO.mode === 'chars' && (CH.sub === 'faces' || CH.sub === 'hands' || CH.sub === 'regions')) return wsDrawTarget(); if (STUDIO.mode === 'chars' && (CH.sub === 'draw' || CH.sub === 'body')) return Object.assign({ c: CH.canv[CH.view], undo: CH.undo[CH.view], redo: CH.redo[CH.view], mirror: DRAW.mirror && CH.view !== 'side' }, charMasks()); if (CO.sketch) return { c: CO.sketch.c, undo: CO.sketch.undo, redo: CO.sketch.redo, mirror: DRAW.mirror }; if (CO.ink && CO.inkC) return { c: CO.inkC, undo: CO.inkUndo, redo: CO.inkRedo, mirror: false }; return null; }
 function pushUndo(T) { const x = T.c.getContext('2d'); T.undo.push(x.getImageData(0, 0, T.c.width, T.c.height)); if (T.undo.length > 18) T.undo.shift(); T.redo.length = 0; }
-function doUndo(T, redo) { if (!T) return; const from = redo ? T.redo : T.undo, to = redo ? T.undo : T.redo; if (!from.length) return; const x = T.c.getContext('2d'); to.push(x.getImageData(0, 0, T.c.width, T.c.height)); x.putImageData(from.pop(), 0, 0); afterStroke(); }
+function doUndo(T, redo) { if (!T) return; const from = redo ? T.redo : T.undo, to = redo ? T.undo : T.redo; if (!from.length) return; const x = T.c.getContext('2d'); to.push(x.getImageData(0, 0, T.c.width, T.c.height)); x.putImageData(from.pop(), 0, 0); afterStroke(); if (posedOn()) { ensureDraftRig(true); STUDIO.boardDirty = true; } }
 const HT_PAT = {};
 function halftonePat(g, col) { if (HT_PAT[col]) return g.createPattern(HT_PAT[col], 'repeat'); const c = mkCanvas(10, 10), x = c.getContext('2d'); x.fillStyle = col; x.beginPath(); x.arc(2.5, 2.5, 2.1, 0, TAU); x.arc(7.5, 7.5, 2.1, 0, TAU); x.fill(); HT_PAT[col] = c; return g.createPattern(c, 'repeat'); }
 // paint one brush segment into g (canvas coords)
@@ -2800,16 +2823,22 @@ function strokeSeg(T, x0, y0, x1, y1, pr) {
   const x = T.c.getContext('2d'); const w = DRAW.size * (0.8 + 0.2 * pr) * (T.c.width / 512); const er = DRAW.tool === 'eraser';
   const segs = [[x0, y0, x1, y1]]; if (T.mirror) { const W = T.c.width; segs.push([W - x0, y0, W - x1, y1]); }
   const acc0 = DRAW.acc; const col = T.col || DRAW.color; const svB = DRAW.brush; if (T.brush) DRAW.brush = T.brush;
-  for (const [a, b, c2, d] of segs) {
-    DRAW.acc = acc0;
-    if (!T.mask || er) { x.save(); paintSeg(x, a, b, c2, d, w, col, er); x.restore(); continue; }
+  segs.forEach(([a, b, c2, d], si) => {
+    DRAW.acc = acc0; const mk = si ? (T.mask2 || T.mask) : T.mask, em = si ? T.emask2 : T.emask;
+    { const pd = w * 2.5 + 4; dirtyUnion(Math.min(a, c2) - pd, Math.min(b, d) - pd, Math.max(a, c2) + pd, Math.max(b, d) + pd); }
+    if (er && em) { const pad = w * 2.5 + 4, bx = Math.floor(Math.min(a, c2) - pad), by = Math.floor(Math.min(b, d) - pad), bw = Math.ceil(Math.abs(c2 - a) + pad * 2), bh = Math.ceil(Math.abs(d - b) + pad * 2);
+      if (!SCR || SCR.width < bw || SCR.height < bh) SCR = mkCanvas(Math.max(bw, SCR ? SCR.width : 0), Math.max(bh, SCR ? SCR.height : 0));
+      const g = SCR.getContext('2d'); g.save(); g.globalCompositeOperation = 'source-over'; g.clearRect(0, 0, SCR.width, SCR.height); g.translate(-bx, -by); g.lineCap = 'round'; g.strokeStyle = '#000'; g.lineWidth = w * 1.8; g.beginPath(); g.moveTo(a, b); g.lineTo(c2 + 0.01, d); g.stroke(); g.restore();
+      g.save(); g.globalCompositeOperation = 'destination-in'; g.drawImage(em.c, bx, by, bw, bh, 0, 0, bw, bh); g.restore();
+      x.save(); x.globalCompositeOperation = 'destination-out'; x.drawImage(SCR, 0, 0, bw, bh, bx, by, bw, bh); x.restore(); return; }
+    if (!mk || er) { x.save(); paintSeg(x, a, b, c2, d, w, col, er); x.restore(); return; }
     // masked: paint into scratch box, keep only inside the silhouette
     const pad = w * 2.5 + 4, bx = Math.floor(Math.min(a, c2) - pad), by = Math.floor(Math.min(b, d) - pad), bw = Math.ceil(Math.abs(c2 - a) + pad * 2), bh = Math.ceil(Math.abs(d - b) + pad * 2);
     if (!SCR || SCR.width < bw || SCR.height < bh) SCR = mkCanvas(Math.max(bw, SCR ? SCR.width : 0), Math.max(bh, SCR ? SCR.height : 0));
     const g = SCR.getContext('2d'); g.save(); g.clearRect(0, 0, SCR.width, SCR.height); g.translate(-bx, -by); paintSeg(g, a, b, c2, d, w, col, false); g.restore();
-    g.save(); g.globalCompositeOperation = 'destination-in'; g.drawImage(T.mask.c, bx, by, bw, bh, 0, 0, bw, bh); g.restore();
+    g.save(); g.globalCompositeOperation = 'destination-in'; g.drawImage(mk.c, bx, by, bw, bh, 0, 0, bw, bh); g.restore();
     x.drawImage(SCR, 0, 0, bw, bh, bx, by, bw, bh);
-  }
+  });
   DRAW.brush = svB;
 }
 function floodFill(cv, sx, sy, colHex, mask) {
@@ -2828,31 +2857,33 @@ function floodFill(cv, sx, sy, colHex, mask) {
 }
 function afterStroke() {
   if (STUDIO.mode === 'chars' && (CH.sub === 'faces' || CH.sub === 'hands')) { const T = wsDrawTarget(); if (T) T.c._drawn = true; afterWsStroke(); updateDrawLayer(); }
-  else if (STUDIO.mode === 'chars') { CH.dirty = true; updateDrawLayer(); (CH.staleViews = CH.staleViews || new Set()).add(CH.view); CH.lastStroke = performance.now(); if (CH.sub === 'regions') STUDIO.boardDirty = true; }
+  else if (STUDIO.mode === 'chars') { CH.dirty = true; updateDrawLayer(); (CH.staleViews = CH.staleViews || new Set()).add(CH.view); CH.lastStroke = performance.now(); if (CH.sub === 'regions') { STUDIO.boardDirty = true; const rc = CH.regC && CH.regC[CH.view]; if (rc) rc._lv = (rc._lv || 0) + 1; } if (posedOn()) STUDIO.boardDirty = true; }
   else if (CO.ink && CO.inkC) { const pg = curPage(); pg.ink = CO.inkC.toDataURL('image/webp', 0.85); IMGS['ink:' + pg.id] = { src: pg.ink, ready: true, img: CO.inkC }; coChanged(); }
   else if (CO.sketch) { updateDrawLayer(); }
 }
-function drawArea(P, x, y, w, h, cw, ch) { // pointer area mapping into drawing canvas coords
-  const map = (px, py) => [(px - x) / w * cw, (py - y) / h * ch];
+function drawArea(P, x, y, w, h, cw, ch, pick) { // pointer area mapping into drawing canvas coords; pick(px,py) -> mapper (posed drawing)
+  const lin = (px, py) => [(px - x) / w * cw, (py - y) / h * ch]; let map = lin;
   P.area(x, y, w, h, {
-    down: (px, py, hand) => { const T = drawTarget(); if (!T) return; const [u, v] = map(px, py);
-      if (DRAW.tool === 'fill') { pushUndo(T); floodFill(T.c, u, v, T.col || DRAW.color, T.mask); if (T.mirror) floodFill(T.c, T.c.width - u, v, DRAW.color, T.mask); afterStroke(); return; }
-      if (DRAW.tool === 'pick') { const d = T.c.getContext('2d').getImageData(u | 0, v | 0, 1, 1).data; if (d[3] > 20) { DRAW.color = '#' + [d[0], d[1], d[2]].map(n => n.toString(16).padStart(2, '0')).join(''); DRAW.tool = 'brush'; STUDIO.left.refresh(); } return; }
+    down: (px, py, hand) => { DRAW.dirtyR = null; CH.lock = null;
+      if (pick) { const m = pick(px, py); if (!m) return; map = m; } else { map = lin; const [u0, v0] = lin(px, py); charLockAt(u0, v0); }
+      const T = drawTarget(); if (!T) return; const [u, v] = map(px, py);
+      if (DRAW.tool === 'fill') { pushUndo(T); floodFill(T.c, u, v, T.col || DRAW.color, T.mask); if (T.mirror) floodFill(T.c, T.c.width - u, v, DRAW.color, T.mask2 || T.mask); DRAW.dirtyR = [0, 0, T.c.width, T.c.height]; posedSync(); afterStroke(); CH.lock = null; return; }
+      if (DRAW.tool === 'pick') { const d = T.c.getContext('2d').getImageData(u | 0, v | 0, 1, 1).data; if (d[3] > 20) { DRAW.color = '#' + [d[0], d[1], d[2]].map(n => n.toString(16).padStart(2, '0')).join(''); DRAW.tool = 'brush'; STUDIO.left.refresh(); } CH.lock = null; return; }
       pushUndo(T); DRAW.last = [u, v]; DRAW.start = [u, v]; DRAW.b = [u, v]; DRAW.acc = 0; DRAW.active = true; DRAW.hand = hand; DRAW.dirtyTex = true;
-      if (DRAW.tool !== 'line') strokeSeg(T, u, v, u, v, hand ? hand.trig : 1); },
+      if (DRAW.tool !== 'line') { strokeSeg(T, u, v, u, v, hand ? hand.trig : 1); posedSync(); } },
     move: (px, py, hand) => { if (!DRAW.active) return; const T = drawTarget(); if (!T) return; const [u, v] = map(px, py);
       if (DRAW.tool === 'line') { // live preview from the snapshot taken at pen-down
         const k = 1 - GAME.state.settings.steady * 0.85; DRAW.b = [lerp(DRAW.b[0], u, k), lerp(DRAW.b[1], v, k)];
-        T.c.getContext('2d').putImageData(T.undo[T.undo.length - 1], 0, 0); DRAW.acc = 0; strokeSeg(T, DRAW.start[0], DRAW.start[1], DRAW.b[0], DRAW.b[1], 1); DRAW.dirtyTex = true; return; }
+        T.c.getContext('2d').putImageData(T.undo[T.undo.length - 1], 0, 0); DRAW.acc = 0; strokeSeg(T, DRAW.start[0], DRAW.start[1], DRAW.b[0], DRAW.b[1], 1); DRAW.dirtyTex = true; posedSync(); return; }
       const k = 1 - GAME.state.settings.steady * 0.9; const nb = [lerp(DRAW.b[0], u, k), lerp(DRAW.b[1], v, k)]; const L = DRAW.b;
-      if (Math.hypot(nb[0] - L[0], nb[1] - L[1]) < 0.6) return; strokeSeg(T, L[0], L[1], nb[0], nb[1], hand ? clamp((hand.trig - 0.5) * 2, 0, 1) : 1); DRAW.b = nb; DRAW.dirtyTex = true; if (Math.random() < 0.15) AU.play('stroke'); },
-    up: () => { if (DRAW.active) { DRAW.active = false; afterStroke(); } }
+      if (Math.hypot(nb[0] - L[0], nb[1] - L[1]) < 0.6) return; strokeSeg(T, L[0], L[1], nb[0], nb[1], hand ? clamp((hand.trig - 0.5) * 2, 0, 1) : 1); DRAW.b = nb; DRAW.dirtyTex = true; posedSync(); if (Math.random() < 0.15) AU.play('stroke'); },
+    up: () => { if (DRAW.active) { DRAW.active = false; afterStroke(); } CH.lock = null; }
   });
 }
 function updateDrawLayer() {
   const L = STUDIO.drawLayer, B = STUDIO.board; let src = null, rect = null;
   L.mat.col[3] = 1; L.mat.tr = false;
-  if (STUDIO.mode === 'chars' && (CH.sub === 'draw' || CH.sub === 'body')) { src = CH.canv[CH.view]; rect = CH_RECT; }
+  if (STUDIO.mode === 'chars' && (CH.sub === 'draw' || CH.sub === 'body')) { if (posedOn()) { L.visible = false; return; } src = CH.canv[CH.view]; rect = CH_RECT; }
   else if (STUDIO.mode === 'chars' && (CH.sub === 'faces' || CH.sub === 'hands')) { const T = wsDrawTarget(); if (T) { src = T.c; rect = CH_FACE_RECT; } }
   else if (STUDIO.mode === 'chars' && CH.sub === 'regions') { src = ensureRegCanvas(CH.view); rect = CH_RECT; L.mat.col[3] = 0.6; L.mat.tr = true; }
   else if (STUDIO.mode === 'comics' && CO.sketch) { src = CO.sketch.c; rect = CO.sketch.rect; }
@@ -2870,13 +2901,16 @@ function drawBoard(c, P) {
 }
 function drawBoardChars(c, P) {
   if (CH.sub === 'faces' || CH.sub === 'hands' || CH.sub === 'regions' || CH.sub === 'profile') return wsBoard(c, P);
+  if (CH.sub === 'gear') return wsGearBoard(c, P);
   if (CH.sub === 'draw' || CH.sub === 'body') {
     ['front', 'side', 'back'].forEach((v, i) => P.btn(150 + i * 248, 24, 228, 80, v.toUpperCase() + ' VIEW', () => { CH.view = v; STUDIO.boardDirty = true; updateDrawLayer(); }, { on: CH.view === v, title: 1, fs: 34, onCol: TH.blue }));
     const [x, y, w, h] = CH_RECT; c.fillStyle = '#f7f9ff'; c.fillRect(x, y, w, h); c.strokeStyle = '#d7deef'; c.lineWidth = 3; c.strokeRect(x, y, w, h);
-    if (DRAW.guide) { c.save(); c.translate(x, y); c.scale(w / CW, h / CHH); drawGuide(c, draftKey(), CH.view); c.restore(); }
-    drawArea(P, x, y, w, h, CW, CHH);
+    if (posedOn()) drawPosedBoard(c, P);
+    else { if (DRAW.guide) { c.save(); c.translate(x, y); c.scale(w / CW, h / CHH); drawGuide(c, draftKey(), CH.view); c.restore(); }
+      drawArea(P, x, y, w, h, CW, CHH); }
+    if (CH.sub === 'draw') drawPoseStrip(c, P);
     P.text(DRAW.mirror && CH.view !== 'side' ? 'MIRROR ON' : '', x + w - 10, y + h + 26, { s: 22, al: 'right', col: TH.blue });
-    P.text('Point and hold TRIGGER to draw', x + 10, y + h + 26, { s: 22, col: '#7a8399' });
+    P.text(posedOn() ? 'Each stroke sticks to the body part you start on' : 'Point and hold TRIGGER to draw', x + 10, y + h + 26, { s: 22, col: '#7a8399' });
   } else {
     // pose test
     P.text('POSE TEST', 40, 60, { title: 1, s: 48, col: TH.red });
@@ -2909,6 +2943,7 @@ function ensureDraftRig(force) { const r = RIGS[CH.draft.id]; if (!r || CH.rigSt
 function drawLeft(c, P) {
   if (STUDIO.mode === 'chars' && (CH.sub === 'regions' || CH.sub === 'profile')) return wsLeft(c, P);
   if (STUDIO.mode === 'chars' && CH.sub === 'pose') return wsPoseLeft(c, P);
+  if (STUDIO.mode === 'chars' && CH.sub === 'gear') return wsGearLeft(c, P);
   panelBG(c, P, STUDIO.mode === 'chars' ? ({ draw: 'DRAWING TOOLS', body: 'DRAWING TOOLS', faces: 'FACE TOOLS', hands: 'HAND TOOLS' }[CH.sub] || 'TOOLS') : (CO.sketch ? 'SKETCH TOOLS' : CO.ink ? 'INK TOOLS' : 'PAGES'));
   if (STUDIO.mode === 'chars' && CH.sub !== 'pose') return drawToolsUI(c, P, 100, CH.sub === 'draw' || CH.sub === 'body');
   if (STUDIO.mode === 'chars') { // pose tools
@@ -3035,7 +3070,7 @@ function saveCharacter(quiet) {
   const faces = (d.faces || []).map(f => ({ id: f.id, name: f.name, front: url(CH.faceC[f.id] && CH.faceC[f.id].front), side: url(CH.faceC[f.id] && CH.faceC[f.id].side) }));
   const hands = {}; for (const k in CH.handC) { const h = CH.handC[k]; const f = h.front && h.front._drawn ? h.front : null, sd = h.side && h.side._drawn ? h.side : null; if (f || sd) hands[k] = { front: url(f), side: url(sd) }; }
   const regions = {}; for (const v in CH.regC) if (!isBlank(CH.regC[v])) regions[v] = url(CH.regC[v], true);
-  const rec = { id: d.id, name: d.name, bio: d.bio || '', body: d.body, props: d.props || {}, faces, hands, regions, views: d.views, poses: d.poses || [], ver: d.ver, created: d.created || Date.now() };
+  const rec = { id: d.id, name: d.name, bio: d.bio || '', body: d.body, props: d.props || {}, faces, hands, regions, views: d.views, poses: d.poses || [], gear: d.gear || null, ver: d.ver, created: d.created || Date.now() };
   const i = GAME.state.characters.findIndex(c => c.id === d.id); if (i >= 0) GAME.state.characters[i] = rec; else GAME.state.characters.push(rec);
   const cl = (o) => { const r = {}; for (const k in o) { r[k] = {}; for (const v in o[k]) if (o[k][v] && (o === CH.faceC || o[k][v]._drawn)) r[k][v] = cloneCanvas(o[k][v]); } return r; }; const regs = {}; for (const v in regions) regs[v] = cloneCanvas(CH.regC[v]);
   rigFromCanvases(rec, { front: cloneCanvas(CH.canv.front), side: cloneCanvas(CH.canv.side), back: cloneCanvas(CH.canv.back) }, { faces: cl(CH.faceC), hands: cl(CH.handC), regions: regs }); d.isNew = false; CH.dirty = false;
@@ -3058,9 +3093,9 @@ function updateStandee(dt) {
   if (key !== STUDIO.stKey || STUDIO.standeeDirty || idleTick) { STUDIO.stKey = key; STUDIO.standeeDirty = false; STUDIO.idleT = 0;
     const c = STUDIO.standeeC.getContext('2d'); c.clearRect(0, 0, 384, 576); ensureDraftRig();
     if (['front', 'side', 'back'].every(v => isBlank(CH.canv[v]))) { c.save(); c.scale(384 / CW, 576 / CHH); drawGuide(c, draftKey(), view, 0.9); c.restore(); }
-    else { const t = performance.now() / 1000; const base = CH.sub === 'pose' ? CH.pose : poseClone(POSES[1]); const p = poseClone(base); const br = Math.sin(t * 2.2);
+    else { const t = performance.now() / 1000; const base = CH.sub === 'pose' ? CH.pose : CH.sub === 'gear' ? wsGearPose() : poseClone(POSES[1]); const p = poseClone(base); const br = Math.sin(t * 2.2);
       p.f.torso = (p.f.torso || 0) + br * 1.2; p.f.head = (p.f.head || 0) + Math.sin(t * 0.9) * 2.5; p.f.uArmR = (p.f.uArmR || 0) + br * 2; p.f.uArmL = (p.f.uArmL || 0) + br * 2; p.s.torso = (p.s.torso || 0) + br; p.s.uArmN = (p.s.uArmN || 0) + br * 2; p.s.uArmF = (p.s.uArmF || 0) - br * 2;
-      const o = CH.sub === 'pose' ? wsPoseOpts() : CH.sub === 'faces' ? { expr: CH.faceSel } : CH.sub === 'hands' ? { hands: { R: CH.handSel, L: CH.handSel } } : {};
+      const o = CH.sub === 'pose' ? wsPoseOpts() : CH.sub === 'faces' ? { expr: CH.faceSel } : CH.sub === 'hands' ? { hands: { R: CH.handSel, L: CH.handSel } } : {}; o.gear = CH.draft.gear || null; o.ch = CH.draft;
       drawPuppet(c, CH.draft.id, view, p, 192, 572 - Math.max(0, br) * 2, 560, flip, 0, o); }
     STUDIO.standeeT.up(); }
 }
@@ -3221,16 +3256,16 @@ function studioStickTick(dt) { // resize/rotate selected element while dragging
   if (ch) { CO.drag.moved = true; STUDIO.boardDirty = true; }
 }
 // ---------- sketch (custom props / backgrounds) ----------
-function startSketch(kind, rec) { const W = kind === 'prop' ? 512 : 768, H = 512; CO.sketch = { kind, c: mkCanvas(W, H), undo: [], redo: [], edit: rec || null }; CO.artSel = null;
+function startSketch(kind, rec) { const W = kind === 'bg' ? 768 : 512, H = 512; CO.sketch = { kind, c: mkCanvas(W, H), undo: [], redo: [], edit: rec || null }; CO.artSel = null;
   if (rec) { const S0 = CO.sketch; const im = new Image(); im.onload = () => { if (CO.sketch !== S0) return; S0.c.getContext('2d').drawImage(im, 0, 0, W, H); STUDIO.boardDirty = true; updateDrawLayer(); }; im.src = rec.img; } const a = W / H; const bw = 960, bh = bw / a; CO.sketch.rect = [(1024 - bw) / 2, 200, bw, bh]; STUDIO.boardDirty = true; [STUDIO.left, STUDIO.right].forEach(p => p.refresh()); updateDrawLayer(); }
 function drawBoardSketch(c, P) {
-  const S = CO.sketch; P.text(S.edit ? 'EDITING “' + S.edit.name.toUpperCase() + '”' : S.kind === 'prop' ? 'DRAW A PROP' : 'DRAW A BACKGROUND', 512, 70, { title: 1, s: 60, al: 'center', col: TH.red });
-  P.text(S.kind === 'prop' ? 'Anything you draw here becomes a sticker you can place in panels.' : 'This fills a whole panel behind your characters.', 512, 130, { s: 24, al: 'center', col: '#7a8399' });
-  const [x, y, w, h] = S.rect; if (S.kind === 'prop') { for (let yy = 0; yy < h; yy += 32) for (let xx = 0; xx < w; xx += 32) { c.fillStyle = ((xx + yy) / 32) % 2 ? '#eef1f7' : '#ffffff'; c.fillRect(x + xx, y + yy, 32, 32); } } else { c.fillStyle = '#fff'; c.fillRect(x, y, w, h); }
-  c.lineWidth = 3; c.strokeStyle = TH.ink; c.strokeRect(x, y, w, h); drawArea(P, x, y, w, h, S.c.width, S.c.height);
-  P.btn(120, y + h + 40, 380, 100, 'SAVE', () => { if (isBlank(S.c)) { toast('Draw something first!', TH.red); return; } KB.open({ title: 'Name it', text: S.edit ? S.edit.name : '', max: 20, done: t => { const img = S.c.toDataURL('image/webp', 0.9); const id = uid();
+  const S = CO.sketch; P.text(S.edit ? 'EDITING “' + S.edit.name.toUpperCase() + '”' : S.kind === 'gear' ? 'DRAW ' + ({ hand: 'HAND GEAR', head: 'HEADGEAR', face: 'FACE GEAR', back: 'BACK GEAR' }[S.slot] || 'GEAR') : S.kind === 'prop' ? 'DRAW A PROP' : 'DRAW A BACKGROUND', 512, 70, { title: 1, s: 60, al: 'center', col: TH.red });
+  P.text(S.kind === 'gear' ? ({ hand: 'Draw it held in the fist. The arrow points away from the hand.', head: 'Draw it on the ghost head — it will sit there on your hero.', face: 'Draw it over the ghost face.', back: 'Draw capes, wings or packs around the ghost body.' }[S.slot]) : S.kind === 'prop' ? 'Anything you draw here becomes a sticker you can place in panels.' : 'This fills a whole panel behind your characters.', 512, 130, { s: 24, al: 'center', col: '#7a8399' });
+  const [x, y, w, h] = S.rect; if (S.kind !== 'bg') { for (let yy = 0; yy < h; yy += 32) for (let xx = 0; xx < w; xx += 32) { c.fillStyle = ((xx + yy) / 32) % 2 ? '#eef1f7' : '#ffffff'; c.fillRect(x + xx, y + yy, 32, 32); } } else { c.fillStyle = '#fff'; c.fillRect(x, y, w, h); }
+  if (S.kind === 'gear') drawGearGhost(c, S.slot, x, y, w, h); c.lineWidth = 3; c.strokeStyle = TH.ink; c.strokeRect(x, y, w, h); drawArea(P, x, y, w, h, S.c.width, S.c.height);
+  P.btn(120, y + h + 40, 380, 100, 'SAVE', () => { if (isBlank(S.c)) { toast('Draw something first!', TH.red); return; } KB.open({ title: 'Name it', text: S.edit ? S.edit.name : '', max: 20, done: t => { if (S.kind === 'gear') return finishGearSketch(S, t); const img = S.c.toDataURL('image/webp', 0.9); const id = uid();
     if (S.edit) { S.edit.img = img; S.edit.name = t || S.edit.name; CO.addTab = S.kind === 'prop' ? 'props' : 'bgs'; CO.sketch = null; refreshAllComics(); saveSoon(); toast('Updated everywhere it’s used!', TH.green); STUDIO.boardDirty = true; [STUDIO.left, STUDIO.right].forEach(p => p.refresh()); updateDrawLayer(); return; } if (S.kind === 'prop') { GAME.state.customProps.push({ id, name: t || 'My Prop', img }); CO.addTab = 'props'; } else { GAME.state.customBgs.push({ id, name: t || 'My Background', img }); CO.addTab = 'bgs'; } CO.sketch = null; saveSoon(); toast('Saved to your library!', TH.green); STUDIO.boardDirty = true; [STUDIO.left, STUDIO.right].forEach(p => p.refresh()); updateDrawLayer(); } }); }, { col: TH.green, title: 1, fs: 48 });
-  P.btn(524, y + h + 40, 380, 100, 'CANCEL', () => { CO.sketch = null; STUDIO.boardDirty = true; [STUDIO.left, STUDIO.right].forEach(p => p.refresh()); updateDrawLayer(); }, { col: '#fff', title: 1, fs: 48 });
+  P.btn(524, y + h + 40, 380, 100, 'CANCEL', () => { const ret = S.ret; CO.sketch = null; if (ret && ret !== 'comics') { setStudioMode(ret); return; } STUDIO.boardDirty = true; [STUDIO.left, STUDIO.right].forEach(p => p.refresh()); updateDrawLayer(); }, { col: '#fff', title: 1, fs: 48 });
 }
 // ---------- comic ops ----------
 function openComic(cm) {
@@ -3261,6 +3296,10 @@ function publishComic() {
 }
 function refreshAllComics() { for (const cm of GAME.state.comics) cm.ver = (cm.ver || 1) + 1; invalidateComicTextures(); refreshPress(); STUDIO.boardDirty = true; }
 function deleteCustomArt(kind, id) {
+  if (kind === 'gear') { const L = GAME.state.customGear || []; const j = L.findIndex(a => a.id === id); if (j < 0) return; L.splice(j, 1); const strip = g => { if (g) for (const k in g) if (g[k] && g[k].k === 'custom' && g[k].id === id) g[k] = null; };
+    for (const ch of GAME.state.characters) { strip(ch.gear); ch.ver = (ch.ver || 0) + 1; } strip(CH.draft && CH.draft.gear);
+    for (const cm of GAME.state.comics) for (const pg of [cm.cover, cm.back].concat(cm.pages)) { if (!pg) continue; for (const pn of pg.panels) if (pn) for (const e of pn.el) strip(e.gear); }
+    CO.artSel = null; delete IMGS['gear:' + id]; GEAR_ICONS.clear(); for (const k in THUMBS) delete THUMBS[k]; STUDIO.standeeDirty = true; refreshAllComics(); saveSoon(); STUDIO.right.refresh(); return; }
   const lib = kind === 'prop' ? GAME.state.customProps : GAME.state.customBgs; const i = lib.findIndex(a => a.id === id); if (i < 0) return; lib.splice(i, 1);
   for (const cm of GAME.state.comics) for (const pg of [cm.cover, cm.back].concat(cm.pages)) { if (!pg) continue; for (const pn of pg.panels) { if (!pn) continue;
     if (kind === 'prop') pn.el = pn.el.filter(e => !(e.t === 'prop' && e.k === 'custom' && e.pid === id)); else if (pn.bg && pn.bg.k === 'custom' && pn.bg.id === id) pn.bg = { k: 'none' }; } }
@@ -3383,7 +3422,14 @@ function drawEditTab(c, P, y0) {
   y += 82; S('DELETE', mod(() => { pg.panels[CO.sel.pi].el.splice(CO.sel.ei, 1); CO.sel = null; }), 30, y, 570, { col: '#ffb3b0' });
   y += 96;
   if (se.t === 'char') {
-    ['front', 'side', 'back'].forEach((v, i) => S(v.toUpperCase(), mod(() => se.view = v), 30 + i * 192, y, 182, { on: (se.view || 'front') === v, onCol: TH.blue }));
+    ['front', 'side', 'back'].forEach((v, i) => S(v.toUpperCase(), mod(() => se.view = v), 30 + i * 144, y, 136, { on: (se.view || 'front') === v, onCol: TH.blue, fs: 24 }));
+    S('GEAR', () => { CO.charPage = CO.charPage === 'gear' ? 'pose' : 'gear'; STUDIO.right.refresh(); }, 462, y, 138, { on: CO.charPage === 'gear', onCol: TH.red, fs: 26 });
+    if (CO.charPage === 'gear') { const ch0 = charById(se.cid); const own = se.gear !== undefined;
+      P.text(own ? 'Gear for this panel only' : 'Using ' + ((ch0 && ch0.name) || 'hero') + '’s default gear', 34, y + 96, { s: 22, col: own ? TH.yellow : '#b9c3e6' });
+      const commit = (fn) => { coSnap(); if (se.gear === undefined) se.gear = JSON.parse(JSON.stringify((ch0 && ch0.gear) || {})); fn(se.gear); coChanged(); };
+      drawGearPicker(c, P, y + 118, se.gear !== undefined ? se.gear : (ch0 && ch0.gear), commit, { rows: 3, cellH: 82, extra: { label: 'HERO DEFAULT', dis: !own, fn: () => { coSnap(); delete se.gear; coChanged(); } },
+        onDrawn: rec => { const s2 = rec.slot === 'hand' ? (GUI.slot === 'L' ? 'L' : 'R') : rec.slot; const e2 = selElem(); if (e2 && e2.t === 'char') { if (e2.gear === undefined) e2.gear = JSON.parse(JSON.stringify((charById(e2.cid) || {}).gear || {})); e2.gear[s2] = { k: 'custom', id: rec.id }; coChanged(); } } });
+      return; }
     y += 84; P.btn(30, y, 570, 70, CO.poseJoints ? 'POSE JOINTS: ON (drag dots)' : 'POSE JOINTS: OFF', () => { CO.poseJoints = !CO.poseJoints; STUDIO.boardDirty = true; STUDIO.right.refresh(); }, { on: CO.poseJoints, fs: 26, onCol: TH.blue });
     y += 82; P.text('Pose: ' + (se.poseName || 'Custom'), 34, y + 14, { s: 24, col: '#fff' });
     const ch = charById(se.cid); const plist = POSES.concat((ch && ch.poses) || []);
@@ -3485,9 +3531,9 @@ function drawComicList(c, P, y) {
 // ===================== GAME: state, save, menus, shop computer, modes =====================
 const GAME = {
   state: null, mode: 'title', maxInside: 4, t: 0,
-  defaultState() { return { v: 1, started: false, shopName: '', style: null, settings: { music: 0.5, sfx: 0.85, turnSpeed: 110, height: 0, maxCust: 4, steady: 0.5 }, characters: [], comics: [], customProps: [], customBgs: [], furniture: [], sales: { log: [], totals: {}, byPersona: {}, revenue: 0, count: 0 }, cash: 0, facade: '#3f7fe0', created: Date.now() }; },
+  defaultState() { return { v: 1, started: false, shopName: '', style: null, settings: { music: 0.5, sfx: 0.85, turnSpeed: 110, height: 0, maxCust: 4, steady: 0.5 }, characters: [], comics: [], customProps: [], customBgs: [], customGear: [], furniture: [], sales: { log: [], totals: {}, byPersona: {}, revenue: 0, count: 0 }, cash: 0, facade: '#3f7fe0', created: Date.now() }; },
   onRigReady() { for (const k in THUMBS) delete THUMBS[k]; invalidateComicTextures(); if (STUDIO.right) { STUDIO.right.refresh(); STUDIO.boardDirty = true; } for (const f of FURN) if (f.type === 'standee') drawStandee(f); if (PRESSBOX.P) PRESSBOX.P.refresh(); },
-  onImgReady() { STUDIO.boardDirty = true; }
+  onImgReady(key) { STUDIO.boardDirty = true; if (key && key.startsWith('gear:')) { for (const k in THUMBS) delete THUMBS[k]; GEAR_ICONS.clear(); STUDIO.standeeDirty = true; invalidateComicTextures(); if (STUDIO.right) STUDIO.right.refresh(); } }
 };
 // ---------- persistence (IndexedDB w/ localStorage fallback) ----------
 const DB = {
@@ -3891,7 +3937,7 @@ function touchAct(act, down) {
 
 // ---- src/14_workshop.js
 // ===================== CHARACTER WORKSHOP (Build 2) =====================
-const WS_MODES = [['draw', 'DRAW'], ['body', 'BODY'], ['faces', 'FACES'], ['hands', 'HANDS'], ['regions', 'REGIONS'], ['pose', 'POSE'], ['profile', 'PROFILE']];
+const WS_MODES = [['draw', 'DRAW'], ['body', 'BODY'], ['faces', 'FACES'], ['hands', 'HANDS'], ['regions', 'REGIONS'], ['pose', 'POSE'], ['gear', 'GEAR'], ['profile', 'PROFILE']];
 const CH_FACE_RECT = [112, 150, 800, 800];
 Object.assign(CH, { faceC: {}, handC: {}, regC: {}, faceSel: null, handSel: 'fist', regPart: 1, showCut: true, poseExpr: null, poseHands: 'auto', poseLook: 0 });
 function wsReset() { CH.faceC = {}; CH.handC = {}; CH.regC = {}; CH.faceSel = null; CH.handSel = 'fist'; CH.poseExpr = null; CH.poseHands = 'auto'; CH.poseLook = 0; }
@@ -4006,13 +4052,13 @@ function wsPoseLeft(c, P) {
   if (!ps.length) P.text('None yet — pose your hero, then save!', 34, y + 40, { s: 22, col: '#b9c3e6' });
   ps.slice(0, 6).forEach((p, i) => P.btn(30 + (i % 2) * 290, y + 22 + Math.floor(i / 2) * 76, 280, 66, p.name, () => { CH.pose = poseClone(p); CH.poseSel = p.name; if (p.view) CH.poseView = p.view; re(); }, { col: '#fff', on: CH.poseSel === p.name, fs: 26 }));
 }
-function wsPoseOpts() { return { expr: CH.poseExpr, hands: CH.poseHands === 'auto' ? (POSE_HANDS[CH.poseSel] || {}) : { R: CH.poseHands, L: CH.poseHands }, look: CH.poseLook }; }
+function wsPoseOpts() { return { expr: CH.poseExpr, hands: CH.poseHands === 'auto' ? (POSE_HANDS[CH.poseSel] || {}) : { R: CH.poseHands, L: CH.poseHands }, look: CH.poseLook, gear: CH.draft.gear || null, ch: CH.draft }; }
 // ---------- RIGHT ----------
 function wsRight(c, P) {
   panelBG(c, P, null); const d = CH.draft;
   c.fillStyle = '#fff'; rr(c, 24, 20, 582, 72, 14); c.fill(); P.text(d.name || 'Tap to name your character', 44, 57, { s: d.name ? 38 : 26, col: d.name ? TH.ink : '#8b93a8', title: !!d.name, max: 540 });
   P.wl.push({ id: 'cname', x: 24, y: 20, w: 582, h: 72, fn: () => KB.open({ title: 'Character name', text: d.name, max: 22, done: t => { d.name = t; CH.dirty = true; STUDIO.right.refresh(); } }) });
-  WS_MODES.forEach(([k, n], i) => { const row = i < 4 ? 0 : 1, col = i < 4 ? i : i - 4, w = row ? 186 : 138, x = 24 + col * (w + (row ? 12 : 10)); P.btn(x, 106 + row * 76, w, 66, n, () => wsSetSub(k), { on: CH.sub === k, title: 1, fs: 28, onCol: TH.red }); });
+  WS_MODES.forEach(([k, n], i) => { const row = i < 4 ? 0 : 1, col = i < 4 ? i : i - 4, w = 138, x = 24 + col * (w + 10); P.btn(x, 106 + row * 76, w, 66, n, () => wsSetSub(k), { on: CH.sub === k, title: 1, fs: 28, onCol: TH.red }); });
   let y = 272;
   if (CH.sub === 'draw') {
     P.text('Body type', 34, y + 8, { s: 22, col: '#b9c3e6' }); const keys = Object.keys(BODY_TYPES); const bi = keys.indexOf(d.body);
@@ -4049,6 +4095,7 @@ function wsRight(c, P) {
     wrapText(c, 'The game cuts your drawing into body parts automatically. With SHOW CUT on, each colour is a part. If something moves with the wrong part when posing (a cape with an arm, hair with the body), pick the right part on the left and paint over it.', 560).forEach((l, i) => c.fillText(l, 34, y + 50 + i * 30));
   } else if (CH.sub === 'pose') {
     P.text('Premade poses', 34, y + 10, { s: 26, col: '#fff' }); POSES.forEach((p, i) => { P.btn(24 + (i % 3) * 196, y + 30 + Math.floor(i / 3) * 62, 186, 54, p.name, () => { CH.pose = poseClone(p); CH.poseSel = p.name; CH.poseView = p.view; STUDIO.boardDirty = true; STUDIO.standeeDirty = true; STUDIO.right.refresh(); STUDIO.left.refresh(); }, { on: CH.poseSel === p.name, col: '#fff', fs: 22, r: 10 }); });
+  } else if (CH.sub === 'gear') { wsGearRight(c, P, y);
   } else if (CH.sub === 'profile') {
     P.text('Profile', 34, y + 10, { s: 28, col: '#fff', title: 1 });
     P.btn(24, y + 40, 582, 70, d.bio ? 'EDIT BIO' : '+ WRITE A BIO', () => KB.open({ title: 'Biography', text: d.bio, max: 220, done: t => { d.bio = t; CH.dirty = true; STUDIO.boardDirty = true; STUDIO.right.refresh(); } }), { col: TH.green, title: 1, fs: 32 });
@@ -4061,6 +4108,433 @@ function wsRight(c, P) {
 function wsNewChar() { CH.draft = newCharDraft(); CH.canv = freshCanv(); CH.undo = { front: [], side: [], back: [] }; CH.redo = { front: [], side: [], back: [] }; wsReset(); CH.dirty = false; CH.view = 'front'; CH.sub = 'draw'; STUDIO.boardDirty = true; [STUDIO.left, STUDIO.right].forEach(p => p.refresh()); updateDrawLayer(); STUDIO.standeeDirty = true; }
 // props change → rebuild rig after a pause
 function wsTick() { if (CH.propsT && performance.now() - CH.propsT > 450) { CH.propsT = 0; CH.rigStale = true; STUDIO.standeeDirty = true; STUDIO.boardDirty = true; } }
+
+// ---- src/15_gear.js
+// ===================== ARMORY: gear your heroes hold and wear =====================
+// slots: R / L (hands), head, face, back.  Item record in a slot: { k, id?(custom), col?, a?(deg), s?(scale) }
+const GEAR_SLOTS = [['R', 'R HAND', 'hand'], ['L', 'L HAND', 'hand'], ['head', 'HEAD', 'head'], ['face', 'FACE', 'face'], ['back', 'BACK', 'back']];
+const slotType = s => s === 'R' || s === 'L' ? 'hand' : s;
+// D = { u: arm unit, r: head radius, sh: half shoulder width, tl: torso length, td: torso depth, view }
+const GEAR = [
+  // ---- hand (grip at 0,0; forearm points +x; item's "up" is -y) ----
+  { k: 'sword', n: 'Sword', t: 'hand', c: '#d9e1ec' }, { k: 'katana', n: 'Katana', t: 'hand', c: '#eef3f8' }, { k: 'eblade', n: 'Energy Blade', t: 'hand', c: '#2ec5ea' },
+  { k: 'axe', n: 'Axe', t: 'hand', c: '#c0c7d6' }, { k: 'hammer', n: 'Hammer', t: 'hand', c: '#8a8f9c' }, { k: 'shield', n: 'Shield', t: 'hand', c: '#2350d8', mount: 'arm' },
+  { k: 'blaster', n: 'Blaster', t: 'hand', c: '#4a4d57' }, { k: 'raygun', n: 'Ray Gun', t: 'hand', c: '#ef3b36' }, { k: 'bow', n: 'Bow', t: 'hand', c: '#8a5a35' },
+  { k: 'spear', n: 'Spear', t: 'hand', c: '#d9e1ec' }, { k: 'staff', n: 'Magic Staff', t: 'hand', c: '#8a5cf0' }, { k: 'wand', n: 'Wand', t: 'hand', c: '#ffd23f' },
+  { k: 'bat', n: 'Bat', t: 'hand', c: '#c98b4a' }, { k: 'torch', n: 'Torch', t: 'hand', c: '#ff8a2a' }, { k: 'wrench', n: 'Wrench', t: 'hand', c: '#9aa3b8' },
+  { k: 'book', n: 'Spell Book', t: 'hand', c: '#ef3b36', over: 1 }, { k: 'cup', n: 'Coffee', t: 'hand', c: '#ffffff', over: 1 },
+  // ---- head (origin = head centre) ----
+  { k: 'crown', n: 'Crown', t: 'head', c: '#ffd23f' }, { k: 'helmet', n: 'Knight Helm', t: 'head', c: '#c0c7d6' }, { k: 'cap', n: 'Cap', t: 'head', c: '#ef3b36' },
+  { k: 'wizard', n: 'Wizard Hat', t: 'head', c: '#5b2a86' }, { k: 'tophat', n: 'Top Hat', t: 'head', c: '#16161d' }, { k: 'viking', n: 'Horned Helm', t: 'head', c: '#8a8f9c' },
+  { k: 'ears', n: 'Cat Ears', t: 'head', c: '#16161d' }, { k: 'headband', n: 'Headband', t: 'head', c: '#ef3b36' },
+  // ---- face ----
+  { k: 'mask', n: 'Hero Mask', t: 'face', c: '#16161d' }, { k: 'shades', n: 'Shades', t: 'face', c: '#16161d' }, { k: 'visor', n: 'Cyber Visor', t: 'face', c: '#2ec5ea' }, { k: 'bandana', n: 'Bandana', t: 'face', c: '#ef3b36' },
+  // ---- back (origin = neck) ----
+  { k: 'cape', n: 'Cape', t: 'back', c: '#ef3b36' }, { k: 'wings', n: 'Wings', t: 'back', c: '#ffffff' }, { k: 'batwings', n: 'Bat Wings', t: 'back', c: '#5b2a86' },
+  { k: 'jetpack', n: 'Jetpack', t: 'back', c: '#c0c7d6' }, { k: 'backpack', n: 'Backpack', t: 'back', c: '#36c26b' }, { k: 'quiver', n: 'Quiver', t: 'back', c: '#8a5a35' }
+];
+const GEAR_BY = {}; GEAR.forEach(g => GEAR_BY[g.k] = g);
+const CUSTOM_GEAR_MAP = { hand: [256, 400, 2.8 / 512, 'u'], head: [256, 330, 1 / 100, 'r'], face: [256, 256, 1 / 140, 'r'], back: [256, 96, 1 / 62, 'sh'] };
+
+function gearDraw(c, k, D, col) {
+  const { u, r, sh, tl, td, view } = D; const side = view === 'side', back = view === 'back'; const ink = TH.ink;
+  c.lineJoin = 'round'; c.lineCap = 'round'; c.strokeStyle = ink; const lw = Math.max(1.5, (u || r) * 0.05); c.lineWidth = lw;
+  const F = f => { c.fillStyle = f; c.fill(); c.stroke(); };
+  const box = (x, y, w, h, f, rad = 0) => { c.beginPath(); rad ? rr(c, x, y, w, h, rad) : c.rect(x, y, w, h); F(f); };
+  const circ = (x, y, rad, f) => { c.beginPath(); c.arc(x, y, rad, 0, TAU); F(f); };
+  const flame = (x, y, w, h) => { for (const [k2, f] of [[1, '#ff5a1f'], [0.68, '#ffb020'], [0.38, '#fff36b']]) { const ww = w * k2, hh = h * k2; c.beginPath(); c.moveTo(x - ww, y); c.quadraticCurveTo(x - ww * 1.1, y - hh * 0.55, x, y - hh); c.quadraticCurveTo(x + ww * 1.1, y - hh * 0.55, x + ww, y); c.quadraticCurveTo(x, y + ww * 0.5, x - ww, y); c.fillStyle = f; c.fill(); if (k2 === 1) c.stroke(); } };
+  const brown = '#6b4a2f', gold = '#ffd23f', wood = '#8a5a35';
+  switch (k) {
+    // ---------- hand ----------
+    case 'sword': box(-0.07 * u, -0.22 * u, 0.14 * u, 0.42 * u, brown, 0.03 * u); circ(0, 0.25 * u, 0.08 * u, gold); box(-0.34 * u, -0.3 * u, 0.68 * u, 0.1 * u, gold, 0.04 * u);
+      c.beginPath(); c.moveTo(-0.1 * u, -0.31 * u); c.lineTo(-0.1 * u, -1.55 * u); c.lineTo(0, -1.78 * u); c.lineTo(0.1 * u, -1.55 * u); c.lineTo(0.1 * u, -0.31 * u); c.closePath(); F(col);
+      c.strokeStyle = 'rgba(255,255,255,.85)'; c.lineWidth = lw * 0.7; c.beginPath(); c.moveTo(-0.03 * u, -0.38 * u); c.lineTo(-0.03 * u, -1.5 * u); c.stroke(); break;
+    case 'katana': box(-0.06 * u, -0.25 * u, 0.12 * u, 0.5 * u, '#16161d', 0.03 * u); c.strokeStyle = '#ef3b36'; c.lineWidth = lw * 0.8; for (let i = 0; i < 4; i++) { const y = -0.2 * u + i * 0.12 * u; c.beginPath(); c.moveTo(-0.06 * u, y); c.lineTo(0.06 * u, y + 0.06 * u); c.moveTo(0.06 * u, y); c.lineTo(-0.06 * u, y + 0.06 * u); c.stroke(); } c.strokeStyle = ink; c.lineWidth = lw;
+      c.beginPath(); c.ellipse(0, -0.28 * u, 0.17 * u, 0.06 * u, 0, 0, TAU); F(gold);
+      c.beginPath(); c.moveTo(-0.07 * u, -0.33 * u); c.quadraticCurveTo(-0.02 * u, -1.2 * u, 0.22 * u, -1.95 * u); c.quadraticCurveTo(0.12 * u, -1.15 * u, 0.07 * u, -0.33 * u); c.closePath(); F(col); break;
+    case 'eblade': { box(-0.08 * u, -0.3 * u, 0.16 * u, 0.58 * u, '#4a4d57', 0.04 * u); box(-0.1 * u, -0.36 * u, 0.2 * u, 0.1 * u, '#c0c7d6', 0.03 * u); circ(0, -0.05 * u, 0.035 * u, '#ef3b36');
+      c.save(); c.shadowColor = col; c.shadowBlur = u * 0.35; c.beginPath(); rr(c, -0.075 * u, -1.95 * u, 0.15 * u, 1.6 * u, 0.075 * u); c.fillStyle = col; c.fill(); c.restore(); c.beginPath(); rr(c, -0.035 * u, -1.9 * u, 0.07 * u, 1.52 * u, 0.035 * u); c.fillStyle = '#fff'; c.fill(); break; }
+    case 'axe': box(-0.06 * u, -1.3 * u, 0.12 * u, 1.65 * u, wood, 0.04 * u); c.beginPath(); c.moveTo(0.05 * u, -1.18 * u); c.quadraticCurveTo(0.35 * u, -1.25 * u, 0.55 * u, -1.55 * u); c.quadraticCurveTo(0.8 * u, -1.15 * u, 0.55 * u, -0.72 * u); c.quadraticCurveTo(0.35 * u, -1.0 * u, 0.05 * u, -0.95 * u); c.closePath(); F(col);
+      c.beginPath(); c.moveTo(-0.05 * u, -1.15 * u); c.lineTo(-0.3 * u, -1.07 * u); c.lineTo(-0.05 * u, -0.98 * u); c.closePath(); F(lighten(col, -0.2)); break;
+    case 'hammer': box(-0.06 * u, -1.05 * u, 0.12 * u, 1.38 * u, wood, 0.04 * u); box(-0.45 * u, -1.42 * u, 0.9 * u, 0.42 * u, col, 0.06 * u); box(-0.5 * u, -1.36 * u, 0.1 * u, 0.3 * u, lighten(col, -0.25), 0.02 * u); box(0.4 * u, -1.36 * u, 0.1 * u, 0.3 * u, lighten(col, -0.25), 0.02 * u);
+      c.beginPath(); c.moveTo(-0.1 * u, -1.28 * u); c.lineTo(0.02 * u, -1.28 * u); c.lineTo(-0.04 * u, -1.2 * u); c.lineTo(0.1 * u, -1.2 * u); c.lineTo(-0.06 * u, -1.08 * u); c.strokeStyle = gold; c.lineWidth = lw * 1.4; c.stroke(); break;
+    case 'shield': { c.beginPath(); c.moveTo(-0.5 * u, -0.6 * u); c.quadraticCurveTo(0, -0.72 * u, 0.5 * u, -0.6 * u); c.lineTo(0.5 * u, 0.05 * u); c.quadraticCurveTo(0.45 * u, 0.55 * u, 0, 0.85 * u); c.quadraticCurveTo(-0.45 * u, 0.55 * u, -0.5 * u, 0.05 * u); c.closePath(); F(col);
+      c.save(); c.clip(); c.lineWidth = u * 0.1; c.strokeStyle = gold; c.stroke(); c.restore(); c.lineWidth = lw; c.strokeStyle = ink; c.stroke();
+      c.beginPath(); c.moveTo(-0.32 * u, -0.12 * u); c.lineTo(0, 0.18 * u); c.lineTo(0.32 * u, -0.12 * u); c.lineTo(0.32 * u, 0.06 * u); c.lineTo(0, 0.36 * u); c.lineTo(-0.32 * u, 0.06 * u); c.closePath(); F('#ffffff'); break; }
+    case 'blaster': box(-0.09 * u, -0.12 * u, 0.2 * u, 0.42 * u, '#2b2f3a', 0.05 * u); box(-0.22 * u, -0.38 * u, 0.9 * u, 0.3 * u, col, 0.08 * u); box(0.62 * u, -0.33 * u, 0.42 * u, 0.16 * u, '#2b2f3a', 0.04 * u);
+      c.save(); c.shadowColor = '#ff3b6b'; c.shadowBlur = u * 0.15; box(0.25 * u, -0.42 * u, 0.12 * u, 0.38 * u, '#ff3b6b', 0.04 * u); c.restore(); circ(1.04 * u, -0.25 * u, 0.05 * u, '#ff3b6b'); box(-0.15 * u, -0.46 * u, 0.3 * u, 0.08 * u, '#8a8f9c', 0.03 * u); break;
+    case 'raygun': box(-0.08 * u, -0.1 * u, 0.18 * u, 0.4 * u, '#4a4d57', 0.06 * u); c.beginPath(); c.ellipse(0.1 * u, -0.28 * u, 0.3 * u, 0.2 * u, 0, 0, TAU); F(col);
+      for (let i = 0; i < 3; i++) { c.beginPath(); c.ellipse((0.42 + i * 0.13) * u, -0.28 * u, 0.04 * u, (0.17 - i * 0.03) * u, 0, 0, TAU); F('#c0c7d6'); }
+      c.beginPath(); c.moveTo(0.35 * u, -0.34 * u); c.lineTo(0.85 * u, -0.3 * u); c.lineTo(0.85 * u, -0.26 * u); c.lineTo(0.35 * u, -0.22 * u); c.closePath(); F('#c0c7d6'); circ(0.92 * u, -0.28 * u, 0.08 * u, '#fff36b'); c.beginPath(); c.moveTo(-0.1 * u, -0.4 * u); c.lineTo(-0.28 * u, -0.6 * u); c.lineTo(0.05 * u, -0.45 * u); c.closePath(); F(lighten(col, -0.2)); break;
+    case 'bow': c.strokeStyle = ink; c.lineWidth = u * 0.13; c.beginPath(); c.moveTo(0.02 * u, -1.2 * u); c.quadraticCurveTo(0.7 * u, 0, 0.02 * u, 1.2 * u); c.stroke(); c.strokeStyle = col; c.lineWidth = u * 0.07; c.stroke();
+      c.strokeStyle = '#e8e2d0'; c.lineWidth = Math.max(1, u * 0.02); c.beginPath(); c.moveTo(0.02 * u, -1.2 * u); c.lineTo(0.02 * u, 1.2 * u); c.stroke(); c.lineWidth = lw; c.strokeStyle = ink; box(0.18 * u, -0.14 * u, 0.16 * u, 0.28 * u, '#16161d', 0.04 * u); break;
+    case 'spear': box(-0.045 * u, -1.95 * u, 0.09 * u, 2.85 * u, wood, 0.03 * u); c.beginPath(); c.moveTo(0, -2.45 * u); c.quadraticCurveTo(0.17 * u, -2.1 * u, 0.06 * u, -1.92 * u); c.lineTo(-0.06 * u, -1.92 * u); c.quadraticCurveTo(-0.17 * u, -2.1 * u, 0, -2.45 * u); F(col);
+      box(-0.08 * u, -1.96 * u, 0.16 * u, 0.08 * u, '#ef3b36', 0.03 * u); break;
+    case 'staff': box(-0.05 * u, -1.75 * u, 0.1 * u, 2.75 * u, wood, 0.04 * u); c.beginPath(); c.moveTo(0, -1.72 * u); c.quadraticCurveTo(-0.32 * u, -1.9 * u, -0.18 * u, -2.2 * u); c.moveTo(0, -1.72 * u); c.quadraticCurveTo(0.32 * u, -1.9 * u, 0.18 * u, -2.2 * u); c.lineWidth = u * 0.07; c.strokeStyle = wood; c.stroke(); c.lineWidth = lw; c.strokeStyle = ink;
+      c.save(); c.shadowColor = col; c.shadowBlur = u * 0.4; circ(0, -1.98 * u, 0.2 * u, col); c.restore(); circ(-0.06 * u, -2.04 * u, 0.05 * u, '#ffffff'); break;
+    case 'wand': box(-0.035 * u, -0.95 * u, 0.07 * u, 1.15 * u, '#2b2f3a', 0.03 * u); box(-0.035 * u, -0.95 * u, 0.07 * u, 0.12 * u, '#ffffff', 0.03 * u); c.save(); c.shadowColor = col; c.shadowBlur = u * 0.25; star(c, 0, -1.1 * u, 5, 0.2 * u, 0.09 * u, -PI / 2); F(col); c.restore();
+      for (const [x, y, s] of [[0.25, -1.3, 0.07], [-0.22, -1.25, 0.05], [0.18, -0.9, 0.04]]) { star(c, x * u, y * u, 4, s * u, s * 0.3 * u); c.fillStyle = '#fff'; c.fill(); } break;
+    case 'bat': c.beginPath(); c.moveTo(-0.05 * u, 0.22 * u); c.lineTo(-0.05 * u, -0.3 * u); c.quadraticCurveTo(-0.17 * u, -0.9 * u, -0.15 * u, -1.45 * u); c.arc(0, -1.45 * u, 0.15 * u, PI, 0); c.quadraticCurveTo(0.17 * u, -0.9 * u, 0.05 * u, -0.3 * u); c.lineTo(0.05 * u, 0.22 * u); c.closePath(); F(col);
+      c.beginPath(); c.ellipse(0, 0.25 * u, 0.1 * u, 0.05 * u, 0, 0, TAU); F(lighten(col, -0.2)); box(-0.055 * u, -0.15 * u, 0.11 * u, 0.32 * u, '#16161d', 0.03 * u); break;
+    case 'torch': box(-0.06 * u, -0.8 * u, 0.12 * u, 1.1 * u, wood, 0.04 * u); box(-0.1 * u, -0.86 * u, 0.2 * u, 0.16 * u, '#4a4d57', 0.03 * u); c.save(); c.shadowColor = col; c.shadowBlur = u * 0.3; flame(0, -0.86 * u, 0.2 * u, 0.6 * u); c.restore(); break;
+    case 'wrench': box(-0.07 * u, -0.95 * u, 0.14 * u, 1.2 * u, col, 0.05 * u); box(-0.22 * u, -1.1 * u, 0.44 * u, 0.2 * u, col, 0.05 * u); box(-0.22 * u, -1.38 * u, 0.13 * u, 0.32 * u, col, 0.04 * u); box(0.09 * u, -1.38 * u, 0.13 * u, 0.32 * u, col, 0.04 * u); circ(0, 0.12 * u, 0.06 * u, '#ffffff'); break;
+    case 'book': box(-0.02 * u, -0.62 * u, 0.62 * u, 0.78 * u, col, 0.04 * u); box(0.04 * u, -0.56 * u, 0.5 * u, 0.06 * u, '#f6efd9', 0.01 * u); star(c, 0.29 * u, -0.25 * u, 5, 0.14 * u, 0.06 * u, -PI / 2); F(gold); break;
+    case 'cup': box(-0.17 * u, -0.48 * u, 0.36 * u, 0.5 * u, col, 0.05 * u); box(-0.18 * u, -0.32 * u, 0.38 * u, 0.15 * u, '#a8713f', 0.02 * u); box(-0.2 * u, -0.56 * u, 0.42 * u, 0.1 * u, '#2b2f3a', 0.04 * u);
+      c.strokeStyle = 'rgba(160,170,190,.8)'; c.lineWidth = lw; for (const x of [-0.06, 0.08]) { c.beginPath(); c.moveTo(x * u, -0.62 * u); c.quadraticCurveTo((x + 0.08) * u, -0.75 * u, x * u, -0.88 * u); c.stroke(); } break;
+    // ---------- head ----------
+    case 'crown': { const w = side ? 0.55 : 0.64, ox = side ? 0.05 * r : 0; c.beginPath(); c.moveTo(ox - w * r, -0.7 * r); const n = side ? 4 : 5; for (let i = 0; i <= n; i++) { const x = ox - w * r + i * 2 * w * r / n; c.lineTo(x, -1.45 * r); if (i < n) c.lineTo(x + w * r / n, -1.05 * r); } c.lineTo(ox + w * r, -0.7 * r); c.closePath(); F(col);
+      for (let i = 0; i <= n; i++) circ(ox - w * r + i * 2 * w * r / n, -1.47 * r, 0.07 * r, '#fff6c2'); box(ox - w * r, -0.9 * r, 2 * w * r, 0.2 * r, lighten(col, -0.15)); circ(ox, -0.8 * r, 0.08 * r, '#ef3b36'); if (!side) { circ(ox - 0.35 * r, -0.8 * r, 0.06 * r, '#2ec5ea'); circ(ox + 0.35 * r, -0.8 * r, 0.06 * r, '#36c26b'); } break; }
+    case 'helmet': { circ(0, -0.05 * r, 1.12 * r, col); c.save(); c.beginPath(); c.arc(0, -0.05 * r, 1.12 * r, 0, TAU); c.clip(); c.fillStyle = 'rgba(255,255,255,.35)'; c.beginPath(); c.ellipse(-0.4 * r, -0.55 * r, 0.25 * r, 0.4 * r, -0.4, 0, TAU); c.fill(); c.restore();
+      if (back) { c.beginPath(); c.moveTo(0, -1.15 * r); c.lineTo(0, 1.0 * r); c.stroke(); }
+      else if (side) { c.beginPath(); c.moveTo(0.05 * r, -0.12 * r); c.lineTo(1.12 * r, -0.12 * r); c.lineWidth = r * 0.14; c.strokeStyle = ink; c.stroke(); c.lineWidth = lw; for (let i = 0; i < 3; i++) circ(0.75 * r, (0.25 + i * 0.18) * r, 0.04 * r, ink); }
+      else { box(-0.68 * r, -0.22 * r, 1.36 * r, 0.16 * r, ink, 0.05 * r); c.beginPath(); c.moveTo(0, -1.15 * r); c.lineTo(0, -0.24 * r); c.moveTo(0, 0.0); c.lineTo(0, 1.05 * r); c.stroke(); for (let i = 0; i < 3; i++) { circ(-0.3 * r, (0.2 + i * 0.2) * r, 0.04 * r, ink); circ(0.3 * r, (0.2 + i * 0.2) * r, 0.04 * r, ink); } }
+      c.beginPath(); c.moveTo(-0.1 * r, -1.12 * r); c.quadraticCurveTo(side ? -0.9 * r : 0, -1.75 * r, side ? -1.0 * r : 0.1 * r, -1.0 * r); c.quadraticCurveTo(side ? -0.5 * r : 0.25 * r, -1.35 * r, 0.12 * r, -1.12 * r); F('#ef3b36'); break; }
+    case 'cap': if (side) { c.beginPath(); c.moveTo(0.45 * r, -0.4 * r); c.quadraticCurveTo(1.0 * r, -0.48 * r, 1.4 * r, -0.3 * r); c.quadraticCurveTo(1.0 * r, -0.28 * r, 0.45 * r, -0.28 * r); c.closePath(); F(lighten(col, -0.15)); c.beginPath(); c.arc(-0.05 * r, -0.35 * r, 0.9 * r, PI, 0); c.closePath(); F(col); circ(-0.05 * r, -1.25 * r, 0.09 * r, col); }
+      else { c.beginPath(); c.arc(0, -0.35 * r, 0.92 * r, PI, 0); c.closePath(); F(col); if (!back) { c.beginPath(); c.ellipse(0, -0.36 * r, 0.82 * r, 0.22 * r, 0, 0, PI); c.closePath(); F(lighten(col, -0.15)); } c.beginPath(); c.moveTo(0, -1.27 * r); c.lineTo(0, -0.38 * r); c.stroke(); circ(0, -1.27 * r, 0.09 * r, col);
+        if (!back) { c.beginPath(); c.arc(0, -0.75 * r, 0.2 * r, 0, TAU); F('#ffffff'); c.fillStyle = col; c.font = `${0.28 * r}px ${F_TITLE}`; c.textAlign = 'center'; c.textBaseline = 'middle'; c.fillText('★', 0, -0.73 * r); c.textAlign = 'left'; } } break;
+    case 'wizard': { c.beginPath(); c.ellipse(0, -0.72 * r, 1.3 * r, 0.3 * r, 0, 0, TAU); F(col); c.beginPath(); c.moveTo(-0.62 * r, -0.8 * r); c.quadraticCurveTo(-0.35 * r, -1.8 * r, 0.25 * r, -2.6 * r); c.quadraticCurveTo(0.6 * r, -2.3 * r, 0.55 * r, -2.05 * r); c.quadraticCurveTo(0.3 * r, -1.6 * r, 0.62 * r, -0.8 * r); c.closePath(); F(col);
+      c.beginPath(); c.moveTo(-0.6 * r, -0.86 * r); c.quadraticCurveTo(0, -0.7 * r, 0.6 * r, -0.86 * r); c.lineTo(0.56 * r, -1.05 * r); c.quadraticCurveTo(0, -0.92 * r, -0.54 * r, -1.05 * r); c.closePath(); F(gold);
+      for (const [x, y, s] of [[-0.1, -1.5, 0.13], [0.2, -1.95, 0.09], [-0.25, -1.2, 0.07]]) { star(c, x * r, y * r, 5, s * r, s * 0.45 * r, -PI / 2); F('#fff36b'); } break; }
+    case 'tophat': { c.beginPath(); c.ellipse(0, -0.78 * r, 1.05 * r, 0.22 * r, 0, 0, TAU); F(col); box(-0.62 * r, -2.1 * r, 1.24 * r, 1.32 * r, col, 0.06 * r); c.beginPath(); c.ellipse(0, -2.1 * r, 0.62 * r, 0.14 * r, 0, 0, TAU); F(lighten(col, 0.15)); box(-0.62 * r, -1.12 * r, 1.24 * r, 0.24 * r, '#ef3b36'); break; }
+    case 'viking': { const hx = side ? 0.8 : 1; for (const s of side ? [1] : [-1, 1]) { c.beginPath(); c.moveTo(s * 0.7 * r * hx, -0.5 * r); c.quadraticCurveTo(s * 1.55 * r * hx, -0.6 * r, s * 1.45 * r * hx, -1.6 * r); c.quadraticCurveTo(s * 1.2 * r * hx, -0.95 * r, s * 0.6 * r * hx, -0.8 * r); c.closePath(); F('#f6e8c9'); }
+      c.beginPath(); c.arc(0, -0.3 * r, 0.98 * r, PI, 0); c.closePath(); F(col); box(-1.0 * r, -0.42 * r, 2.0 * r, 0.2 * r, lighten(col, -0.2), 0.05 * r); if (!back && !side) box(-0.08 * r, -0.4 * r, 0.16 * r, 0.6 * r, lighten(col, -0.2), 0.04 * r);
+      for (let i = -2; i <= 2; i++) circ(i * 0.4 * r, -0.32 * r, 0.04 * r, '#ffffff'); break; }
+    case 'ears': for (const s of side ? [-0.15] : [-1, 1]) { const x = side ? s * r : s * 0.55 * r; c.beginPath(); c.moveTo(x - 0.32 * r, -0.7 * r); c.lineTo(x + (side ? 0 : s * 0.25 * r), -1.55 * r); c.lineTo(x + 0.32 * r, -0.75 * r); c.closePath(); F(col); c.beginPath(); c.moveTo(x - 0.16 * r, -0.85 * r); c.lineTo(x + (side ? 0 : s * 0.2 * r), -1.32 * r); c.lineTo(x + 0.16 * r, -0.88 * r); c.closePath(); c.fillStyle = back ? lighten(col, 0.1) : '#ff9cc2'; c.fill(); } break;
+    case 'headband': { c.beginPath(); c.moveTo(-0.97 * r, -0.4 * r); c.quadraticCurveTo(0, -0.72 * r, 0.97 * r, -0.4 * r); c.lineTo(0.99 * r, -0.18 * r); c.quadraticCurveTo(0, -0.48 * r, -0.99 * r, -0.18 * r); c.closePath(); F(col);
+      const tx = side ? -0.9 * r : 0.9 * r, sg = side ? -1 : 1; for (const [dy, L] of [[0, 0.9], [0.1, 0.7]]) { c.beginPath(); c.moveTo(tx, (-0.32 + dy) * r); c.quadraticCurveTo(tx + sg * 0.5 * r, (-0.2 + dy) * r, tx + sg * L * r, (0.15 + dy * 2) * r); c.lineTo(tx + sg * (L - 0.12) * r, (0.25 + dy * 2) * r); c.quadraticCurveTo(tx + sg * 0.35 * r, (-0.05 + dy) * r, tx, (-0.2 + dy) * r); c.closePath(); F(col); }
+      if (!back && !side) { box(-0.16 * r, -0.62 * r, 0.32 * r, 0.24 * r, '#c0c7d6', 0.04 * r); } break; }
+    // ---------- face ----------
+    case 'mask': if (side) { c.beginPath(); c.moveTo(0.2 * r, -0.3 * r); c.quadraticCurveTo(0.7 * r, -0.42 * r, 1.0 * r, -0.28 * r); c.lineTo(0.95 * r, 0.02 * r); c.quadraticCurveTo(0.6 * r, 0.12 * r, 0.25 * r, 0.0); c.closePath(); F(col); c.beginPath(); c.ellipse(0.7 * r, -0.14 * r, 0.12 * r, 0.08 * r, 0, 0, TAU); F('#ffffff'); }
+      else { c.beginPath(); c.moveTo(-0.85 * r, -0.28 * r); c.quadraticCurveTo(-0.4 * r, -0.45 * r, 0, -0.3 * r); c.quadraticCurveTo(0.4 * r, -0.45 * r, 0.85 * r, -0.28 * r); c.quadraticCurveTo(0.8 * r, 0.12 * r, 0.4 * r, 0.1 * r); c.quadraticCurveTo(0.1 * r, 0.08 * r, 0, -0.05 * r); c.quadraticCurveTo(-0.1 * r, 0.08 * r, -0.4 * r, 0.1 * r); c.quadraticCurveTo(-0.8 * r, 0.12 * r, -0.85 * r, -0.28 * r); F(col);
+        for (const s of [-1, 1]) { c.beginPath(); c.ellipse(s * 0.38 * r, -0.12 * r, 0.17 * r, 0.1 * r, s * 0.15, 0, TAU); F('#ffffff'); } } break;
+    case 'shades': if (side) { c.beginPath(); c.moveTo(0.95 * r, -0.12 * r); c.lineTo(-0.1 * r, -0.2 * r); c.lineWidth = r * 0.07; c.stroke(); c.lineWidth = lw; box(0.52 * r, -0.26 * r, 0.42 * r, 0.26 * r, col, 0.1 * r); }
+      else { c.beginPath(); c.moveTo(-0.15 * r, -0.17 * r); c.quadraticCurveTo(0, -0.26 * r, 0.15 * r, -0.17 * r); c.lineWidth = r * 0.07; c.stroke(); c.lineWidth = lw; for (const s of [-1, 1]) box(s * 0.4 * r - 0.25 * r, -0.28 * r, 0.5 * r, 0.3 * r, col, 0.12 * r); }
+      c.strokeStyle = 'rgba(255,255,255,.7)'; c.lineWidth = lw; for (const x of side ? [0.62] : [-0.52, 0.28]) { c.beginPath(); c.moveTo(x * r, -0.2 * r); c.lineTo((x + 0.1) * r, -0.12 * r); c.stroke(); } break;
+    case 'visor': { c.save(); c.shadowColor = col; c.shadowBlur = r * 0.3; c.beginPath(); if (side) { c.moveTo(0.05 * r, -0.36 * r); c.lineTo(1.02 * r, -0.3 * r); c.lineTo(1.0 * r, -0.02 * r); c.lineTo(0.05 * r, 0.0); } else { c.moveTo(-0.95 * r, -0.36 * r); c.quadraticCurveTo(0, -0.5 * r, 0.95 * r, -0.36 * r); c.lineTo(0.92 * r, -0.02 * r); c.quadraticCurveTo(0, -0.12 * r, -0.92 * r, -0.02 * r); } c.closePath(); c.globalAlpha = 0.9; F(col); c.restore();
+      c.strokeStyle = 'rgba(255,255,255,.85)'; c.lineWidth = lw * 1.2; c.beginPath(); c.moveTo((side ? 0.2 : -0.6) * r, -0.28 * r); c.lineTo((side ? 0.7 : 0.4) * r, -0.3 * r); c.stroke(); break; }
+    case 'bandana': { if (side) { c.beginPath(); c.moveTo(0.0, 0.02 * r); c.lineTo(1.02 * r, 0.05 * r); c.quadraticCurveTo(0.95 * r, 0.6 * r, 0.55 * r, 0.95 * r); c.quadraticCurveTo(0.2 * r, 0.6 * r, 0.0, 0.5 * r); c.closePath(); F(col); }
+      else { c.beginPath(); c.moveTo(-0.9 * r, 0.02 * r); c.quadraticCurveTo(0, -0.08 * r, 0.9 * r, 0.02 * r); c.quadraticCurveTo(0.7 * r, 0.6 * r, 0, 1.0 * r); c.quadraticCurveTo(-0.7 * r, 0.6 * r, -0.9 * r, 0.02 * r); F(col); }
+      c.fillStyle = '#ffffff'; const pts = side ? [[0.5, 0.3], [0.75, 0.5], [0.4, 0.62]] : [[-0.4, 0.22], [0.4, 0.22], [0, 0.45], [-0.2, 0.65], [0.2, 0.65], [0, 0.18]]; for (const [x, y] of pts) { c.beginPath(); c.arc(x * r, y * r, 0.05 * r, 0, TAU); c.fill(); } break; }
+    // ---------- back ----------
+    case 'cape': { const inside = !back && !side; const fc = inside ? lighten(col, -0.3) : col;
+      if (side) { c.beginPath(); c.moveTo(0.35 * td, 0.06 * tl); c.quadraticCurveTo(-0.9 * td, 0.25 * tl, -1.0 * td - 0.38 * tl, 2.1 * tl); for (let i = 1; i <= 4; i++) c.quadraticCurveTo(-1.0 * td - 0.38 * tl + (i - 0.5) * (0.38 * tl + 1.2 * td) / 4, 2.2 * tl, -1.0 * td - 0.38 * tl + i * (0.38 * tl + 1.2 * td) / 4, 2.05 * tl - (i % 2) * 0.05 * tl); c.quadraticCurveTo(-0.2 * td, 1.0 * tl, 0.35 * td, 0.06 * tl); F(fc); break; }
+      c.beginPath(); c.moveTo(-0.95 * sh, 0.16 * tl); c.quadraticCurveTo(-1.5 * sh, 1.1 * tl, -1.8 * sh, 2.15 * tl); const n = 6; for (let i = 1; i <= n; i++) { const x0 = -1.8 * sh + (i - 1) * 3.6 * sh / n, x1 = x0 + 3.6 * sh / n; c.quadraticCurveTo((x0 + x1) / 2, 2.3 * tl, x1, 2.15 * tl); }
+      c.quadraticCurveTo(1.5 * sh, 1.1 * tl, 0.95 * sh, 0.16 * tl); c.quadraticCurveTo(0, 0.02 * tl, -0.95 * sh, 0.16 * tl); F(fc);
+      if (back) { c.strokeStyle = lighten(col, -0.3); c.lineWidth = lw; for (const x of [-0.8, 0, 0.8]) { c.beginPath(); c.moveTo(x * 0.6 * sh, 0.4 * tl); c.quadraticCurveTo(x * sh, 1.3 * tl, x * 1.3 * sh, 2.1 * tl); c.stroke(); } c.beginPath(); c.moveTo(-0.95 * sh, 0.16 * tl); c.quadraticCurveTo(0, 0.02 * tl, 0.95 * sh, 0.16 * tl); c.lineTo(0.8 * sh, 0.32 * tl); c.quadraticCurveTo(0, 0.2 * tl, -0.8 * sh, 0.32 * tl); c.closePath(); c.strokeStyle = ink; F(gold); } break; }
+    case 'wings': case 'batwings': { const bat = k === 'batwings'; const sides = side ? [-1] : [-1, 1];
+      for (const s of sides) { const k2 = side ? 0.75 : 1; const bx = s * (side ? 0.1 * td : 0.3 * sh), by = 0.3 * tl; const tx = bx + s * 2.5 * sh * k2, ty = -0.55 * tl * k2;
+        c.beginPath(); c.moveTo(bx, by); c.quadraticCurveTo(bx + s * 1.0 * sh * k2, -0.75 * tl * k2, tx, ty);
+        if (bat) { const n = 4; for (let i = 1; i <= n; i++) { const t = i / n; const px = lerp(tx, bx + s * 0.6 * sh * k2, t), py = lerp(ty, by + 0.75 * tl * k2, t); c.quadraticCurveTo(lerp(px, bx, 0.25), py - 0.25 * tl * k2, px, py); } }
+        else { const n = 5; for (let i = 1; i <= n; i++) { const t = i / n; const px = lerp(tx, bx + s * 0.35 * sh * k2, t), py = lerp(ty, by + 0.9 * tl * k2, t); c.quadraticCurveTo(px + s * 0.35 * sh * k2, py - 0.15 * tl * k2 + 0.15 * tl * k2, px, py); } }
+        c.closePath(); F(col);
+        c.strokeStyle = bat ? lighten(col, -0.35) : 'rgba(22,22,29,.35)'; c.lineWidth = lw * (bat ? 1.2 : 0.8);
+        if (bat) { for (let i = 1; i < 4; i++) { const t = i / 4; c.beginPath(); c.moveTo(bx + s * 0.4 * sh * k2, by - 0.1 * tl); c.lineTo(lerp(tx, bx + s * 0.6 * sh * k2, t), lerp(ty, by + 0.75 * tl * k2, t)); c.stroke(); } }
+        else { for (let j = 1; j < 3; j++) { c.beginPath(); for (let i = 0; i <= 4; i++) { const t = i / 4; const px = lerp(bx + s * (0.4 + j * 0.5) * sh * k2, tx - s * 0.2 * sh, t * (1 - j * 0.15)), py = lerp(by - 0.05 * tl, ty + 0.25 * tl * j, t); i ? c.lineTo(px, py + j * 0.18 * tl * (1 - t)) : c.moveTo(px, py); } c.stroke(); } }
+        c.strokeStyle = ink; c.lineWidth = lw; } break; }
+    case 'jetpack': { const tank = (x, w) => { box(x - w / 2, -0.12 * tl, w, 1.05 * tl, col, w * 0.45); box(x - w / 2, -0.12 * tl, w, 0.22 * tl, '#ef3b36', w * 0.45); box(x - w * 0.32, 0.9 * tl, w * 0.64, 0.14 * tl, '#4a4d57', w * 0.1); c.save(); c.shadowColor = '#ff8a2a'; c.shadowBlur = tl * 0.15; flame(x, 1.04 * tl, w * 0.36, -0.55 * tl); c.restore(); };
+      if (side) { tank(-0.95 * td, 0.6 * td); break; } if (back) box(-0.42 * sh, 0.1 * tl, 0.84 * sh, 0.6 * tl, lighten(col, -0.2), 0.08 * sh); tank(-0.5 * sh, 0.5 * sh); tank(0.5 * sh, 0.5 * sh); break; }
+    case 'backpack': { if (side) { box(-1.35 * td, 0.12 * tl, 0.75 * td, 0.85 * tl, col, 0.25 * td); box(-1.42 * td, 0.5 * tl, 0.4 * td, 0.35 * tl, lighten(col, -0.15), 0.12 * td); break; }
+      box(-0.62 * sh, 0.06 * tl, 1.24 * sh, 0.9 * tl, col, 0.25 * sh); if (back) { box(-0.62 * sh, 0.06 * tl, 1.24 * sh, 0.3 * tl, lighten(col, -0.15), 0.25 * sh); box(-0.4 * sh, 0.5 * tl, 0.8 * sh, 0.36 * tl, lighten(col, 0.12), 0.12 * sh); circ(0, 0.36 * tl, 0.06 * sh, gold); } break; }
+    case 'quiver': { c.save(); c.rotate(side ? 0.5 : 0.45); const x0 = side ? -1.0 * td : 0, w = 0.36 * (side ? td * 1.6 : sh);
+      for (let i = 0; i < 4; i++) { const ax = x0 + (i - 1.5) * w * 0.26; c.beginPath(); c.moveTo(ax, -0.1 * tl); c.lineTo(ax, -0.55 * tl); c.lineWidth = lw * 1.2; c.strokeStyle = '#8a5a35'; c.stroke(); c.beginPath(); c.moveTo(ax, -0.5 * tl); c.lineTo(ax - w * 0.14, -0.62 * tl); c.lineTo(ax, -0.72 * tl); c.lineTo(ax + w * 0.14, -0.62 * tl); c.closePath(); c.strokeStyle = ink; c.lineWidth = lw * 0.8; F(i % 2 ? '#ef3b36' : '#ffffff'); }
+      c.lineWidth = lw; box(x0 - w / 2, -0.15 * tl, w, 1.1 * tl, col, w * 0.3); box(x0 - w / 2, -0.15 * tl, w, 0.12 * tl, gold, w * 0.2); c.restore(); break; }
+  }
+}
+function gearRec(it) { return it && (it.k === 'custom' ? (GAME.state.customGear || []).find(g => g.id === it.id) : GEAR_BY[it.k]); }
+function gearUnits(T, view) { return { u: (T.s.armU + T.s.armL) / 2, r: T.s.headR, sh: T.s.shW, tl: T.s.torso, td: T.s.torsoT, view }; }
+function drawGearItem(c, it, D, onLoad) {
+  if (!it) return; if (it.k === 'custom') { const g = gearRec(it); if (!g) return; const im = cachedImg('gear:' + g.id, g.img, onLoad); if (!im) return; const [gx, gy, f, uk] = CUSTOM_GEAR_MAP[g.slot] || CUSTOM_GEAR_MAP.hand; const sc = f * D[uk] * (uk === 'u' ? 1 : 1);
+    c.save(); if (g.slot === 'face' && D.view === 'side') { c.translate(D.r * 0.4, 0); c.scale(0.55, 1); } if (g.slot === 'face' && D.view === 'back') { c.restore(); return; } c.drawImage(im, -gx * sc, -gy * sc, 512 * sc, 512 * sc); c.restore(); return; }
+  const g = GEAR_BY[it.k]; if (!g) return; c.save(); gearDraw(c, it.k, D, it.col || g.c); c.restore();
+}
+// which gear goes where for a given part in the draw order. returns [[slot, phase]] ; phase 'pre' (before part) or 'post'
+function gearHook(view, mk, gear) {
+  const out = []; const has = s => gear[s] && gearRec(gear[s]); const ph = s => { const g = GEAR_BY[gear[s].k]; return g && (g.mount === 'arm' || g.over) ? 'post' : 'pre'; };
+  if (view === 'side') {
+    const near = has('R') ? 'R' : 'L', far = near === 'R' ? 'L' : 'R';
+    if (mk === 'lArmN' && has(near)) out.push([near, ph(near)]);
+    if (mk === 'lArmF' && has(far)) out.push([far, ph(far)]);
+  } else if (mk === 'lArmR' || mk === 'lArmL') { const s = mk.slice(-1); if (has(s)) out.push([s, ph(s)]); }
+  if (mk === 'head') { if (has('face') && view !== 'back') out.push(['face', 'post']); if (has('head')) out.push(['head', 'post']); }
+  if (mk === 'torso' && view === 'back' && has('back')) out.push(['back', 'post']);
+  return out;
+}
+function gearFrame(T, view, mk, slot, it, Mk, base) {
+  // local matrix in template space (applied after M[mk])
+  const fb = view !== 'side'; const g = GEAR_BY[it.k] || {};
+  if (slot === 'head' || slot === 'face') { const hc = fb ? T.P.head : T.S.head; return A2.t(hc[0], hc[1]); }
+  if (slot === 'back') { const n = fb ? T.P.neck : T.S.neck; return A2.t(n[0], n[1]); }
+  let a, b; if (fb) { const B = T.bones[view].find(q => q.part === mk); a = B.a; b = B.b; } else { a = T.S.el; b = T.S.hd; }
+  const sc = it.s || 1; const lin = m => [m[0], m[1], m[2], m[3], 0, 0];
+  if (g.mount === 'arm') { // shield: centred on the forearm, kept upright on the page
+    const m = [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2]; let up = 0; if (Mk && base) { const Q = A2.mul(A2.inv(lin(base)), lin(Mk)); up = Math.atan2(Q[1], Q[0]); }
+    return A2.mul(A2.t(m[0], m[1]), A2.mul(A2.r(-up + (it.a || 0) * D2R), A2.s(sc * 0.85, sc * 0.85))); }
+  const phi = Math.atan2(b[1] - a[1], b[0] - a[0]);
+  // choose which side of the fist the item sticks out of: prefer "up" on the page, else away from the body
+  let mirror; const pv = [Math.cos(phi - PI / 2), Math.sin(phi - PI / 2)];
+  if (Mk) { const sv = [Mk[0] * pv[0] + Mk[2] * pv[1], Mk[1] * pv[0] + Mk[3] * pv[1]]; const L = Math.hypot(sv[0], sv[1]) || 1;
+    if (Math.abs(sv[1]) / L > 0.35) mirror = sv[1] > 0; }
+  if (mirror === undefined) mirror = fb ? b[0] < CX : false;
+  let m = A2.mul(A2.t(b[0], b[1]), A2.r(mirror ? phi + PI : phi)); if (mirror) m = A2.mul(m, A2.s(-1, 1));
+  const off = g.over ? A2.t((it.k === 'cup' ? 0.16 : 0.02) * gearUnits(T, view).u, 0) : A2.id();
+  return A2.mul(m, A2.mul(off, A2.mul(A2.r((it.a || 0) * D2R), A2.s(sc, sc))));
+}
+function gearPass(c, cur, M, T, view, gear, mk, phase, dark, onLoad, base) {
+  if (!gear) return; const D = gearUnits(T, view);
+  for (const [slot, ph] of gearHook(view, mk, gear)) { if (ph !== phase) continue; const it = gear[slot];
+    const m = A2.mul(cur, A2.mul(M[mk], gearFrame(T, view, mk, slot, it, M[mk], base))); c.save(); c.setTransform(m[0], m[1], m[2], m[3], m[4], m[5]); if (dark) c.filter = 'brightness(72%)'; drawGearItem(c, it, D, onLoad); c.restore(); }
+}
+function gearBackFirst(c, cur, M, T, view, gear, onLoad) { // capes & wings behind everything (front/side views)
+  if (!gear || view === 'back' || !gear.back || !gearRec(gear.back)) return; const D = gearUnits(T, view); const m = A2.mul(cur, A2.mul(M.torso, gearFrame(T, view, 'torso', 'back', gear.back)));
+  c.save(); c.setTransform(m[0], m[1], m[2], m[3], m[4], m[5]); drawGearItem(c, gear.back, D, onLoad); c.restore();
+}
+function hasAnyGear(g) { return !!g && GEAR_SLOTS.some(([s]) => g[s] && gearRec(g[s])); }
+
+// ---------- icons ----------
+const GEAR_ICONS = new Map();
+function gearIcon(it, size = 128) {
+  const g = gearRec(it); if (!g) return null; const key = (it.k === 'custom' ? 'c:' + it.id + ':' + (g.img || '').length : it.k) + '|' + (it.col || '') + '|' + size; if (GEAR_ICONS.has(key)) return GEAR_ICONS.get(key);
+  const t = slotType(it.k === 'custom' ? g.slot : g.t) || g.t; const W = 420, c0 = mkCanvas(W, W), x = c0.getContext('2d');
+  const D = { u: 70, r: 60, sh: 55, tl: 120, td: 45, view: t === 'back' ? 'back' : 'front' }; x.translate(W / 2, W * (t === 'hand' ? 0.7 : t === 'back' ? 0.25 : 0.55));
+  if (it.k === 'custom') { const im = cachedImg('gear:' + g.id, g.img, () => { GEAR_ICONS.clear(); STUDIO.right && STUDIO.right.refresh(); }); if (!im) return null; }
+  drawGearItem(x, it, D);
+  const d = x.getImageData(0, 0, W, W).data; let x0 = W, y0 = W, x1 = 0, y1 = 0; for (let y = 0; y < W; y += 2) for (let xx = 0; xx < W; xx += 2) if (d[(y * W + xx) * 4 + 3] > 20) { if (xx < x0) x0 = xx; if (xx > x1) x1 = xx; if (y < y0) y0 = y; if (y > y1) y1 = y; }
+  const out = mkCanvas(size, size); if (x1 > x0) { const bw = x1 - x0 + 4, bh = y1 - y0 + 4, sc = Math.min((size - 8) / bw, (size - 8) / bh); out.getContext('2d').drawImage(c0, x0 - 2, y0 - 2, bw, bh, (size - bw * sc) / 2, (size - bh * sc) / 2, bw * sc, bh * sc); }
+  GEAR_ICONS.set(key, out); if (GEAR_ICONS.size > 200) GEAR_ICONS.delete(GEAR_ICONS.keys().next().value); return out;
+}
+
+// ---------- picker UI (shared by the Character Workshop and the Comic Studio) ----------
+const GUI = { slot: 'R', page: 0 };
+const GEAR_COLS = ['#ef3b36', '#2350d8', '#ffd23f', '#36c26b', '#8a5cf0', '#16161d', '#ffffff', '#c0c7d6', '#ff8a2a', '#2ec5ea', '#ff6fb1', '#8a5a35'];
+function drawGearPicker(c, P, y, gear, commit, o = {}) {
+  gear = gear || {}; const rows = o.rows || 3, ch = o.cellH || 96, cw = 110;
+  GEAR_SLOTS.forEach(([s, n], i) => { const on = GUI.slot === s; const eq = gear[s] && gearRec(gear[s]); P.btn(24 + i * 118, y, 110, 58, n, () => { GUI.slot = s; GUI.page = 0; P.refresh(); }, { id: 'gs' + s, on, onCol: TH.blue, fs: 20, r: 10 });
+    if (eq) { c.fillStyle = TH.green; c.beginPath(); c.arc(24 + i * 118 + 100, y + 8, 10, 0, TAU); c.fill(); c.lineWidth = 3; c.strokeStyle = TH.ink; c.stroke(); } });
+  y += 70; const slot = GUI.slot, t = slotType(slot); const cur = gear[slot] || null;
+  const items = [{ none: 1 }].concat(GEAR.filter(g => g.t === t).map(g => ({ k: g.k, n: g.n }))).concat((GAME.state.customGear || []).filter(g => g.slot === t).map(g => ({ k: 'custom', id: g.id, n: g.name, rec: g }))).concat([{ draw: 1 }]);
+  const per = rows * 5, maxP = Math.max(0, Math.ceil(items.length / per) - 1); GUI.page = clamp(GUI.page, 0, maxP);
+  items.slice(GUI.page * per, GUI.page * per + per).forEach((it, i) => {
+    const x = 24 + (i % 5) * 118, yy = y + Math.floor(i / 5) * (ch + 8); const on = it.none ? !cur : cur && cur.k === it.k && (it.k !== 'custom' || cur.id === it.id); const id = 'gi' + (it.none ? 'none' : it.draw ? 'draw' : it.k + (it.id || ''));
+    const hot = P.hot(id); c.fillStyle = TH.ink; rr(c, x + 3, yy + 3, cw, ch, 12); c.fill(); c.fillStyle = it.draw ? TH.green : on ? TH.yellow : hot ? '#fff7cc' : '#fff'; rr(c, x, yy, cw, ch, 12); c.fill(); c.lineWidth = 3; c.strokeStyle = TH.ink; c.stroke();
+    if (it.none) { c.strokeStyle = '#c0c7d6'; c.lineWidth = 6; c.beginPath(); c.arc(x + cw / 2, yy + ch / 2 - 10, 22, 0, TAU); c.moveTo(x + cw / 2 - 15, yy + ch / 2 + 5); c.lineTo(x + cw / 2 + 15, yy + ch / 2 - 25); c.stroke(); P.text('None', x + cw / 2, yy + ch - 14, { s: 17, al: 'center' }); }
+    else if (it.draw) { P.text('+', x + cw / 2, yy + ch / 2 - 10, { s: 56, al: 'center', col: '#fff', title: 1 }); P.text('Draw', x + cw / 2, yy + ch - 14, { s: 18, al: 'center', col: '#fff' }); }
+    else { const ic = gearIcon({ k: it.k, id: it.id, col: on && cur ? cur.col : null }, 128); if (ic) { const s2 = ch - 28; c.drawImage(ic, x + (cw - s2) / 2, yy + 3, s2, s2); } P.text(it.n, x + cw / 2, yy + ch - 13, { s: 16, al: 'center', max: cw - 8 }); }
+    P.wl.push({ id, x, y: yy, w: cw, h: ch, fn: () => {
+      if (it.draw) { startGearSketch(t, null, o.onDrawn); return; }
+      commit(G => { if (it.none) G[slot] = null; else { const keep = G[slot] && G[slot].k === it.k && G[slot].id === it.id; G[slot] = keep ? G[slot] : { k: it.k, id: it.id }; } }); AU.play('snap'); } });
+    if (it.rec) { const sel = CO.artSel && CO.artSel.rec === it.rec; P.btn(x + cw - 38, yy + 4, 34, 34, '', () => { CO.artSel = sel ? null : { kind: 'gear', rec: it.rec }; P.refresh(); }, { id: 'ga' + it.id, r: 8, col: sel ? TH.yellow : '#fff', lw: 3, icon: pencilIcon }); }
+  });
+  y += rows * (ch + 8) + 4;
+  if (CO.artSel && CO.artSel.kind === 'gear' && items.some(it => it.rec === CO.artSel.rec)) { const A = CO.artSel; c.fillStyle = TH.ink; rr(c, 22, y, 586, 72, 14); c.fill(); c.lineWidth = 4; c.strokeStyle = TH.yellow; c.stroke();
+    P.btn(34, y + 8, 180, 56, 'EDIT ART', () => startGearSketch(A.rec.slot, A.rec), { col: TH.green, fs: 22 }); P.btn(222, y + 8, 180, 56, 'RENAME', () => KB.open({ title: 'Rename', text: A.rec.name, max: 20, done: t2 => { if (t2) { A.rec.name = t2; saveSoon(); P.refresh(); } } }), { fs: 22 });
+    P.btn(410, y + 8, 186, 56, 'DELETE', () => confirmBox('Delete “' + A.rec.name + '”? Heroes using it will drop it.', () => { deleteCustomArt('gear', A.rec.id); toast('Deleted', TH.red); }), { col: '#ffb3b0', fs: 22 }); return y + 84; }
+  const isHand = t === 'hand' && cur;
+  P.btn(24, y, 64, 62, '◀', () => { GUI.page--; P.refresh(); }, { dis: GUI.page <= 0, fs: 24 }); P.btn(94, y, 64, 62, '▶', () => { GUI.page++; P.refresh(); }, { dis: GUI.page >= maxP, fs: 24 });
+  P.btn(170, y, 104, 62, 'TURN ↺', () => commit(G => G[slot].a = ((G[slot].a || 0) - 30) % 360), { dis: !isHand, fs: 20 }); P.btn(280, y, 104, 62, 'TURN ↻', () => commit(G => G[slot].a = ((G[slot].a || 0) + 30) % 360), { dis: !isHand, fs: 20 });
+  P.btn(396, y, 100, 62, 'SMALLER', () => commit(G => G[slot].s = clamp((G[slot].s || 1) / 1.15, 0.4, 2.5)), { dis: !cur, fs: 19 }); P.btn(502, y, 104, 62, 'BIGGER', () => commit(G => G[slot].s = clamp((G[slot].s || 1) * 1.15, 0.4, 2.5)), { dis: !cur, fs: 20 });
+  y += 72; const nc = o.extra ? 8 : 12, sw = o.extra ? 54 : 42, sp = o.extra ? 58 : 48;
+  if (cur && cur.k !== 'custom') GEAR_COLS.slice(0, nc).forEach((col, i) => swatch(c, P, 24 + i * sp, y, sw, col, cur.col === col, () => commit(G => G[slot].col = G[slot].col === col ? null : col), 'gc' + i));
+  else P.text(cur ? 'Drawn gear keeps its own colors.' : 'Pick an item to equip it.', 30, y + 26, { s: 21, col: '#b9c3e6' });
+  if (o.extra) P.btn(o.extra.x || 494, y - 2, 112, 58, o.extra.label, o.extra.fn, { dis: o.extra.dis, fs: 17, col: '#fff', r: 10 });
+  return y + 66;
+}
+// ---------- custom gear sketch ----------
+function startGearSketch(type, rec, onDrawn) {
+  const ret = STUDIO.mode; if (STUDIO.mode !== 'comics') { STUDIO.mode = 'comics'; if (!CO.comic) openComic(GAME.state.comics.find(c2 => !c2.published) || null); }
+  startSketch('gear', rec); CO.sketch.slot = rec ? rec.slot : type; CO.sketch.ret = ret; CO.sketch.onDrawn = onDrawn; [STUDIO.top, STUDIO.left, STUDIO.right].forEach(p => p.refresh());
+}
+const GHOSTS = {};
+function drawGearGhost(c, slot, x, y, w, h) {
+  const T = makeTemplate('standard'); const sx = w / 512; c.save(); c.translate(x, y); c.scale(sx, sx); c.globalAlpha = 0.35;
+  if (slot === 'hand') { c.strokeStyle = '#9fb3d9'; c.lineCap = 'round'; c.lineWidth = 70; c.beginPath(); c.moveTo(-20, 430); c.lineTo(230, 400); c.stroke(); c.fillStyle = '#9fb3d9'; c.beginPath(); c.arc(256, 400, 46, 0, TAU); c.fill();
+    c.globalAlpha = 0.7; c.fillStyle = TH.blue; c.font = '30px ' + F_UI; c.textAlign = 'center'; c.fillText('hand', 256, 490); c.strokeStyle = TH.blue; c.lineWidth = 5; c.setLineDash([12, 10]); c.beginPath(); c.moveTo(256, 340); c.lineTo(256, 60); c.stroke(); c.setLineDash([]); c.beginPath(); c.moveTo(236, 90); c.lineTo(256, 56); c.lineTo(276, 90); c.stroke(); }
+  else { const g = GHOSTS[slot] || (GHOSTS[slot] = (() => { const gc = mkCanvas(512, 512), x = gc.getContext('2d'); const [gx, gy, f, uk] = CUSTOM_GEAR_MAP[slot]; const D = gearUnits(T, 'front'); const sc = 1 / (f * D[uk]); const anchor = slot === 'back' ? T.P.neck : T.P.head;
+      x.save(); x.translate(gx, gy); x.scale(sc, sc); x.translate(-anchor[0], -anchor[1]); drawGuide(x, 'standard', 'front', 1, true); x.restore(); x.globalCompositeOperation = 'source-in'; x.fillStyle = '#9fb3d9'; x.fillRect(0, 0, 512, 512);
+      x.globalCompositeOperation = 'source-over'; if (slot !== 'back') { x.fillStyle = '#6f86b8'; const r = slot === 'head' ? 100 : 140, cy = slot === 'head' ? 330 : 256; for (const sd of [-1, 1]) { x.beginPath(); x.ellipse(256 + sd * r * 0.36, cy - r * 0.1, r * 0.09, r * 0.13, 0, 0, TAU); x.fill(); } } return gc; })());
+    c.globalAlpha = 0.5; c.beginPath(); c.rect(0, 0, 512, 512); c.clip(); c.drawImage(g, 0, 0); }
+  c.restore();
+}
+function finishGearSketch(S, name) {
+  const img = S.c.toDataURL('image/webp', 0.92); GAME.state.customGear = GAME.state.customGear || [];
+  let rec = S.edit; if (rec) { rec.img = img; rec.name = name || rec.name; } else { rec = { id: uid(), name: name || 'My Gear', slot: S.slot, img }; GAME.state.customGear.push(rec); }
+  GEAR_ICONS.clear(); for (const k in THUMBS) delete THUMBS[k]; CO.sketch = null; refreshAllComics(); saveSoon(); STUDIO.standeeDirty = true;
+  if (S.ret && S.ret !== 'comics') setStudioMode(S.ret); else { STUDIO.boardDirty = true; [STUDIO.left, STUDIO.right].forEach(p => p.refresh()); updateDrawLayer(); }
+  if (!S.edit && S.onDrawn) S.onDrawn(rec); toast(S.edit ? 'Gear updated!' : 'Added to your Armory!', TH.green);
+}
+
+// ---------- Character Workshop: GEAR mode ----------
+const GEAR_TRY_POSES = ['Hero', 'Stand', 'Fight Stance', 'Punch', 'Victory', 'Run', 'Fly', 'Point', 'Wave', 'Cheer', 'Kick', 'Hero Landing', 'Sneak', 'Jump', 'Thinking', 'Arms Crossed'];
+function wsGearPose() { const p = POSES.find(q => q.name === (CH.gearPose || 'Hero')) || POSES[0]; return p; }
+function wsGearBoard(c, P) {
+  P.text('ARMORY', 40, 64, { title: 1, s: 60, col: TH.red }); P.text('Gear follows every pose — try some on the left.', P.cw - 50, 66, { s: 24, col: '#7a8399', al: 'right' });
+  c.fillStyle = '#f2f6ff'; rr(c, 30, 116, P.cw - 70, 1134, 18); c.fill(); c.strokeStyle = '#d7deef'; c.lineWidth = 3; c.stroke();
+  halftone(c, 34, 120, P.cw - 78, 1126, 'rgba(46,197,234,.08)', 22, 5);
+  c.fillStyle = 'rgba(22,22,29,.08)'; for (const x of [180, 512, 844]) { c.beginPath(); c.ellipse(x, 1158, 120, 20, 0, 0, TAU); c.fill(); }
+  ensureDraftRig(); const p = poseClone(wsGearPose()); const hands = POSE_HANDS[wsGearPose().name] || {};
+  const blank = ['front', 'side', 'back'].every(v => isBlank(CH.canv[v]));
+  [['front', 180], ['side', 512], ['back', 844]].forEach(([v, x]) => {
+    if (blank) { c.save(); c.translate(x - 760 * CW / CHH / 2, 1160 - 760); c.scale(760 / CHH, 760 / CHH); drawGuide(c, draftKey(), v, 0.6); c.restore(); }
+    drawPuppet(c, CH.draft.id, v, p, x, 1160, 760, !!CH.gearFlip, 0, { gear: CH.draft.gear || null, hands, ch: CH.draft });
+    P.text(v.toUpperCase(), x, 1212, { title: 1, s: 36, al: 'center', col: '#9aa3b8' }); });
+  if (blank) P.text('Draw your hero first, then suit them up!', 512, 640, { title: 1, s: 46, al: 'center', col: TH.blue });
+}
+function wsGearLeft(c, P) {
+  panelBG(c, P, 'TRY A POSE');
+  GEAR_TRY_POSES.forEach((n, i) => P.btn(30 + (i % 2) * 290, 110 + Math.floor(i / 2) * 82, 280, 72, n, () => { CH.gearPose = n; STUDIO.boardDirty = true; STUDIO.standeeDirty = true; P.refresh(); }, { on: (CH.gearPose || 'Hero') === n, onCol: TH.blue, fs: 26 }));
+  P.btn(30, 780, 570, 80, CH.gearFlip ? 'FACING: LEFT' : 'FACING: RIGHT', () => { CH.gearFlip = !CH.gearFlip; STUDIO.boardDirty = true; P.refresh(); }, { title: 1, fs: 34 });
+  c.font = '600 22px ' + F_UI; c.fillStyle = '#b9c3e6'; c.textAlign = 'left'; c.textBaseline = 'alphabetic'; wrapText(c, 'This is your hero’s default gear. Every new panel uses it, and you can still change gear panel by panel in the Comic Studio.', 560).forEach((l, i) => c.fillText(l, 34, 900 + i * 30));
+  P.btn(30, 1010, 570, 90, '← BACK TO DRAWING', () => wsSetSub('draw'), { col: TH.cyan, title: 1, fs: 36 });
+}
+function wsGearRight(c, P, y) {
+  const d = CH.draft; P.text('Armory', 34, y + 10, { s: 28, col: '#fff', title: 1 }); P.text('Pick a slot, then tap gear to equip it.', 34, y + 44, { s: 21, col: '#b9c3e6' });
+  const commit = (fn) => { d.gear = JSON.parse(JSON.stringify(d.gear || {})); fn(d.gear); CH.dirty = true; STUDIO.boardDirty = true; STUDIO.standeeDirty = true; P.refresh(); };
+  const ny = drawGearPicker(c, P, y + 70, d.gear, commit, { rows: 4, cellH: 100, onDrawn: rec => { d.gear = d.gear || {}; const s = rec.slot === 'hand' ? (GUI.slot === 'L' ? 'L' : 'R') : rec.slot; d.gear[s] = { k: 'custom', id: rec.id }; CH.dirty = true; STUDIO.boardDirty = true; STUDIO.standeeDirty = true; } });
+  if (hasAnyGear(d.gear)) P.btn(24, Math.min(ny + 6, 970), 582, 60, 'TAKE IT ALL OFF', () => { d.gear = {}; CH.dirty = true; STUDIO.boardDirty = true; STUDIO.standeeDirty = true; P.refresh(); }, { col: '#fff', fs: 24 });
+}
+
+// ---- src/16_posedraw.js
+// ===================== POSE WHILE COLORING + STAY ON ONE PART =====================
+// Strokes are clipped to the body part they start on (the same part split the rig uses),
+// so paint on an arm can never spill onto the torso. While posed, strokes are mapped
+// back through that part's pose transform into the flat drawing.
+DRAW.partLock = true;
+const DRAW_POSES = [
+  ['stand', 'STAND', null],
+  ['out', 'ARMS OUT', { f: { uArmR: 64, lArmR: 0, uArmL: 64, lArmL: 0, uLegR: 12, uLegL: 12 }, s: { uArmN: 88, lArmN: 0, uArmF: -42, lArmF: 8, uLegN: 26, lLegN: 0, uLegF: -26, lLegF: 6 } }],
+  ['star', 'STAR', { f: { uArmR: 118, lArmR: 6, uArmL: 118, lArmL: 6, uLegR: 24, uLegL: 24 }, s: { uArmN: 145, lArmN: 10, uArmF: -62, lArmF: 10, uLegN: 38, lLegN: 12, uLegF: -38, lLegF: 22 } }],
+  ['up', 'ARMS UP', { f: { uArmR: 135, lArmR: 0, uArmL: 135, lArmL: 0, uLegR: 8, uLegL: 8 }, s: { uArmN: 172, lArmN: 0, uArmF: -35, lArmF: 10, uLegN: 18, uLegF: -18, lLegF: 8 } }],
+  ['mine', 'MY POSE', null]
+];
+function posedOn() { return STUDIO.mode === 'chars' && CH.sub === 'draw' && !!CH.drawPose && CH.drawPose !== 'stand'; }
+function drawPoseObj() {
+  if (CH.drawPose === 'mine') return CH.pose || P0();
+  const d = DRAW_POSES.find(q => q[0] === CH.drawPose); return (d && d[2]) || P0();
+}
+function setDrawPose(k) {
+  const was = posedOn(); CH.drawPose = k; CH.lock = null; DRAW.active = false;
+  if (posedOn()) { ensureDraftRig(true); if (!was && !CH.poseTipShown) { CH.poseTipShown = true; toast('Paint the posed hero — strokes stick to the part you start on', TH.blue); } }
+  STUDIO.boardDirty = true; updateDrawLayer(); AU.play('click');
+}
+
+// ---------- part labels (same rules the rig uses to cut the drawing into parts) ----------
+const LBL = new Map(); let LBL_ID = 0;
+function labelInfo(view) {
+  const key = draftKey(); const rc = CH.regC ? CH.regC[view] : null;
+  const rk = rc ? (rc._lid || (rc._lid = ++LBL_ID)) + ':' + (rc._lv || 0) : '0';
+  const k = key + '|' + view + '|' + rk; let I = LBL.get(k); if (I) return I;
+  const full = mkCanvas(CW, CHH); const fx = full.getContext('2d'); fx.fillStyle = '#000'; fx.fillRect(0, 0, CW, CHH);
+  const { lab, bones } = segmentView(full, key, view, rc, true);
+  const idx = {}; bones.forEach((B, i) => idx[B.part] = i);
+  I = { key, view, lab, bones, idx, masks: {}, guide: null }; LBL.set(k, I); if (LBL.size > 12) LBL.delete(LBL.keys().next().value);
+  return I;
+}
+function labelMask(I, k, inLines) { // {c, data, bb:[x0,y0,x1,y1]}
+  const mk = k + (inLines ? 's' : ''); if (I.masks[mk]) return I.masks[mk];
+  const sil = inLines ? silhouetteMask(I.key, I.view).data : null; const c = mkCanvas(CW, CHH), x = c.getContext('2d'); const id = x.createImageData(CW, CHH), d = id.data;
+  let x0 = CW, y0 = CHH, x1 = -1, y1 = -1; const lab = I.lab;
+  for (let i = 0, n = CW * CHH; i < n; i++) if (lab[i] === k && (!sil || sil[i * 4 + 3] > 128)) { const j = i * 4; d[j] = d[j + 1] = d[j + 2] = d[j + 3] = 255; const px = i % CW, py = (i / CW) | 0; if (px < x0) x0 = px; if (px > x1) x1 = px; if (py < y0) y0 = py; if (py > y1) y1 = py; }
+  x.putImageData(id, 0, 0); const M = { c, data: d, bb: x1 < 0 ? [0, 0, 0, 0] : [x0, y0, x1 + 1, y1 + 1] }; I.masks[mk] = M; return M;
+}
+function charMasks() {
+  const L = CH.lock;
+  if (!L) { const m = DRAW.inLines ? silhouetteMask(draftKey(), CH.view) : null; return { mask: m, mask2: m }; }
+  const m = labelMask(L.I, L.k, DRAW.inLines), m2 = L.k2 >= 0 ? labelMask(L.I, L.k2, DRAW.inLines) : m;
+  return { mask: m, mask2: m2, emask: labelMask(L.I, L.k, false), emask2: L.k2 >= 0 ? labelMask(L.I, L.k2, false) : null };
+}
+function charLockAt(u, v) { // standing view: lock the stroke to the part under the pen
+  CH.lock = null; if (!(STUDIO.mode === 'chars' && (CH.sub === 'draw' || CH.sub === 'body')) || !DRAW.partLock || DRAW.tool === 'pick') return;
+  const I = labelInfo(CH.view); const ui = clamp(u | 0, 0, CW - 1), vi = clamp(v | 0, 0, CHH - 1);
+  let k2 = -1; if (DRAW.mirror && CH.view !== 'side') k2 = I.lab[vi * CW + clamp((CW - u) | 0, 0, CW - 1)];
+  CH.lock = { I, k: I.lab[vi * CW + ui], k2 };
+}
+function dirtyUnion(x0, y0, x1, y1) { const R = DRAW.dirtyR; DRAW.dirtyR = R ? [Math.min(R[0], x0), Math.min(R[1], y0), Math.max(R[2], x1), Math.max(R[3], y1)] : [x0, y0, x1, y1]; }
+
+// ---------- posed board ----------
+function posedView() {
+  const key = draftKey(), view = CH.view, pose = drawPoseObj(); const T = makeTemplate(key); const bones = T.bones[view];
+  const m0 = rigMatrices(key, view, pose, A2.id());
+  let bx0 = 1e9, by0 = 1e9, bx1 = -1e9, by1 = -1e9;
+  for (const [mk, pk] of m0.order) { const B = bones.find(b => b.part === pk); if (!B) continue; const r = B.r * 1.25 + 8;
+    for (const p of [B.a, B.b]) { const q = A2.ap(m0.M[mk], p); bx0 = Math.min(bx0, q[0] - r); by0 = Math.min(by0, q[1] - r); bx1 = Math.max(bx1, q[0] + r); by1 = Math.max(by1, q[1] + r); } }
+  by1 = Math.max(by1, GROUND);
+  const f = Math.min(1, (CW - 24) / (bx1 - bx0), (CHH - 24) / (by1 - by0));
+  let dx = 0, dy = 0; const L = CX + f * (bx0 - CX), R = CX + f * (bx1 - CX); if (L < 12) dx = 12 - L; else if (R > CW - 12) dx = CW - 12 - R;
+  const Tp = GROUND + f * (by0 - GROUND), Bt = GROUND + f * (by1 - GROUND); if (Tp < 12) dy = 12 - Tp; else if (Bt > CHH - 8) dy = CHH - 8 - Bt;
+  const sc = CH_RECT[2] / CW;
+  const base = A2.mul(A2.t(CH_RECT[0] + sc * (CX + dx), CH_RECT[1] + sc * (GROUND + dy)), A2.mul(A2.s(sc * f, sc * f), A2.t(-CX, -GROUND)));
+  const { M, order } = rigMatrices(key, view, pose, base);
+  return { M, order, T, base, bones, key, view, groundY: CH_RECT[1] + sc * (GROUND + dy) };
+}
+function guideParts(I) { // light-blue silhouette cut into the same parts
+  if (I.guide) return I.guide; const sil = silhouetteMask(I.key, I.view).c; const g = mkCanvas(CW, CHH), gx = g.getContext('2d');
+  gx.drawImage(sil, 0, 0); gx.globalCompositeOperation = 'source-in'; gx.fillStyle = 'rgba(80,170,255,0.24)'; gx.fillRect(0, 0, CW, CHH);
+  const out = {};
+  I.bones.forEach((B, k) => { const M = labelMask(I, k, true); const [x0, y0, x1, y1] = M.bb; const w = x1 - x0, h = y1 - y0; if (w <= 0 || h <= 0) return;
+    const c = mkCanvas(w, h), x = c.getContext('2d'); x.drawImage(g, x0, y0, w, h, 0, 0, w, h); x.globalCompositeOperation = 'destination-in'; x.drawImage(M.c, x0, y0, w, h, 0, 0, w, h);
+    x.globalCompositeOperation = 'source-over'; x.strokeStyle = 'rgba(40,120,230,0.35)'; x.lineWidth = 2; out[B.part] = { img: c, ox: x0, oy: y0 }; });
+  I.guide = out; return out;
+}
+function drawPosedBoard(c, P) {
+  const [x, y, w, h] = CH_RECT; const PV = posedView(); const I = labelInfo(PV.view);
+  ensureDraftRig(); const rig = RIGS[CH.draft.id]; const V = rig && rig.views[PV.view];
+  const cur = domToA(c.getTransform());
+  c.save(); c.beginPath(); c.rect(x, y, w, h); c.clip();
+  c.setLineDash([8, 8]); c.strokeStyle = 'rgba(40,120,230,0.5)'; c.lineWidth = 2; c.beginPath(); c.moveTo(x + 20, PV.groundY); c.lineTo(x + w - 20, PV.groundY); c.stroke(); c.setLineDash([]);
+  const G = DRAW.guide ? guideParts(I) : null;
+  const drawSet = (parts, dimFar) => { for (const [mk, pk, dark] of PV.order) { const part = parts && parts[pk]; if (!part) continue; const m = A2.mul(cur, PV.M[mk]);
+    c.save(); c.setTransform(m[0], m[1], m[2], m[3], m[4], m[5]); if (dark && dimFar) c.filter = 'brightness(72%)'; c.drawImage(part.img, part.ox, part.oy); c.restore(); } };
+  if (G) drawSet(G, false);
+  if (V) drawSet(V.parts, true);
+  c.restore();
+  drawArea(P, x, y, w, h, CW, CHH, posedPick);
+}
+function posedPick(px, py) { // returns a board->drawing mapper for this stroke, locked to the part under the pen
+  const PV = posedView(); const I = labelInfo(PV.view); const sil = silhouetteMask(PV.key, PV.view).data;
+  let hit = null;
+  for (const needSil of [true, false]) {
+    for (let i = PV.order.length - 1; i >= 0 && !hit; i--) { const [mk, pk] = PV.order[i]; const k = I.idx[pk]; if (k == null) continue;
+      const inv = A2.inv(PV.M[mk]); const [u, v] = A2.ap(inv, [px, py]); if (u < 0 || v < 0 || u >= CW || v >= CHH) continue;
+      const j = (v | 0) * CW + (u | 0); if (I.lab[j] === k && (!needSil || sil[j * 4 + 3] > 128)) hit = { k, inv }; }
+    if (hit) break;
+  }
+  if (!hit) return null;
+  if (DRAW.tool !== 'pick') { const [u, v] = A2.ap(hit.inv, [px, py]); let k2 = -1; if (DRAW.mirror && PV.view !== 'side') k2 = I.lab[clamp(v | 0, 0, CHH - 1) * CW + clamp((CW - u) | 0, 0, CW - 1)]; CH.lock = { I, k: hit.k, k2 }; }
+  return (x, y) => A2.ap(hit.inv, [x, y]);
+}
+let PSCR = null;
+function coverPart(V, pk, x0, y0, x1, y1) {
+  let p = V.parts[pk]; if (p && p.ox <= x0 && p.oy <= y0 && p.ox + p.img.width >= x1 && p.oy + p.img.height >= y1) return p;
+  const nx0 = p ? Math.min(p.ox, x0) : x0, ny0 = p ? Math.min(p.oy, y0) : y0, nx1 = p ? Math.max(p.ox + p.img.width, x1) : x1, ny1 = p ? Math.max(p.oy + p.img.height, y1) : y1;
+  const c = mkCanvas(nx1 - nx0, ny1 - ny0); if (p) c.getContext('2d').drawImage(p.img, p.ox - nx0, p.oy - ny0); p = { img: c, ox: nx0, oy: ny0 }; V.parts[pk] = p; V.any = true; return p;
+}
+function posedSync() { // live: copy the freshly painted pixels of the locked part(s) into the posed rig
+  if (!posedOn() || !CH.lock || !DRAW.dirtyR) return; const rig = RIGS[CH.draft.id]; const V = rig && rig.views[CH.view]; if (!V) return;
+  const I = CH.lock.I; const src = CH.canv[CH.view];
+  for (const k of new Set([CH.lock.k, CH.lock.k2].filter(q => q >= 0))) {
+    const pk = I.bones[k] && I.bones[k].part; if (!pk) continue; const M = labelMask(I, k, false);
+    const x0 = Math.max(0, Math.floor(Math.max(DRAW.dirtyR[0], M.bb[0]))), y0 = Math.max(0, Math.floor(Math.max(DRAW.dirtyR[1], M.bb[1])));
+    const x1 = Math.min(CW, Math.ceil(Math.min(DRAW.dirtyR[2], M.bb[2]))), y1 = Math.min(CHH, Math.ceil(Math.min(DRAW.dirtyR[3], M.bb[3])));
+    const w = x1 - x0, h = y1 - y0; if (w <= 0 || h <= 0) continue;
+    const p = coverPart(V, pk, x0, y0, x1, y1);
+    if (!PSCR || PSCR.width < w || PSCR.height < h) PSCR = mkCanvas(Math.max(w, PSCR ? PSCR.width : 0), Math.max(h, PSCR ? PSCR.height : 0));
+    const g = PSCR.getContext('2d'); g.save(); g.clearRect(0, 0, PSCR.width, PSCR.height); g.drawImage(src, x0, y0, w, h, 0, 0, w, h); g.globalCompositeOperation = 'destination-in'; g.drawImage(M.c, x0, y0, w, h, 0, 0, w, h); g.restore();
+    const px = p.img.getContext('2d'); px.save(); px.globalCompositeOperation = 'destination-out'; px.drawImage(M.c, x0, y0, w, h, x0 - p.ox, y0 - p.oy, w, h); px.restore();
+    px.drawImage(PSCR, 0, 0, w, h, x0 - p.ox, y0 - p.oy, w, h);
+  }
+  rig.var.clear(); STUDIO.boardDirty = true;
+}
+// ---------- board side strips ----------
+function drawPoseStrip(c, P) {
+  P.text('POSE', 76, 148, { title: 1, s: 30, al: 'center', col: TH.ink });
+  const cur = CH.drawPose || 'stand';
+  DRAW_POSES.forEach(([k, n], i) => P.btn(14, 172 + i * 92, 124, 80, n, () => setDrawPose(k), { id: 'dpose' + k, on: cur === k, onCol: TH.blue, fs: n.length > 6 ? 17 : 21 }));
+  P.text('Color the', 76, 650, { s: 17, al: 'center', col: '#7a8399' }); P.text('hidden bits!', 76, 672, { s: 17, al: 'center', col: '#7a8399' });
+  // stay-on-part toggle (always on while posed)
+  const forced = posedOn(), on = forced || DRAW.partLock;
+  P.btn(886, 172, 124, 128, '', () => { DRAW.partLock = !DRAW.partLock; STUDIO.boardDirty = true; toast(DRAW.partLock ? 'Strokes stay on the body part you start on' : 'Strokes can cross body parts', DRAW.partLock ? TH.green : TH.yellow); }, { id: 'partlock', on, onCol: TH.green, col: '#fff', dis: forced });
+  const tc = on ? '#fff' : TH.ink; P.text('STAY ON', 948, 204, { s: 19, al: 'center', col: tc }); P.text('ONE PART', 948, 230, { s: 19, al: 'center', col: tc }); P.text(on ? 'ON' : 'OFF', 948, 270, { s: 30, al: 'center', col: tc, title: 1 });
+  if (forced) { P.text('always on', 948, 318, { s: 16, al: 'center', col: '#7a8399' }); P.text('in poses', 948, 338, { s: 16, al: 'center', col: '#7a8399' }); }
+}
 
 }
 </script>

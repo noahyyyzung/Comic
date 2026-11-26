@@ -1461,7 +1461,7 @@ function renderPage(c, comic, page, W, H, opts = {}) {
     if (pn.bg.k === 'custom') { const bg = GAME.state.customBgs.find(b => b.id === pn.bg.id); const im = bg ? cachedImg('bg:' + bg.id, bg.img, opts.onLoad) : null; c.fillStyle = '#fff'; c.fillRect(px, py, pw, ph); if (im) { const sc = Math.max(pw / im.width, ph / im.height); c.drawImage(im, px + (pw - im.width * sc) / 2, py + (ph - im.height * sc) / 2, im.width * sc, im.height * sc); } }
     else { const bc = bgCached(pn.bg.k, pn.bg.col, (pi + 1) * 17 + (pn.bg.seed || 0), pw, ph); c.drawImage(bc, px, py, pw, ph); }
     if (!page.inkTop) drawInk();
-    if (isCover && opts.mastBack !== false && page.titleBack) drawMasthead(c, comic, W, H);
+    if (isCover && opts.mastBack !== false && page.titleBack) out.cov = drawMasthead(c, comic, W, H, opts.onLoad);
     pn.el.forEach((e, ei) => {
       if (e.hidden) return;
       const ex = px + e.x * pw, ey = py + e.y * ph;
@@ -1484,8 +1484,8 @@ function renderPage(c, comic, page, W, H, opts = {}) {
     if (!single) { const bw = (pn.bw ?? 1) * (page.border ?? 1) * W * 0.006; if (bw > 0) { c.lineWidth = bw; c.lineJoin = 'miter'; c.strokeStyle = pn.bc || TH.ink; panelPath(c, pn, px, py, pw, ph); c.stroke(); c.lineJoin = 'round'; } }
     if (opts.hiPanel === pi) { c.save(); c.lineWidth = W * 0.006; c.strokeStyle = TH.cyan; c.setLineDash([W * 0.015, W * 0.01]); panelPath(c, single ? null : pn, px + 3, py + 3, pw - 6, ph - 6); c.stroke(); c.restore(); }
   });
-  if (isCover && !page.titleBack) drawMasthead(c, comic, W, H);
-  if (page.back) drawBackOverlay(c, comic, page, W, H);
+  if (isCover && !page.titleBack) out.cov = drawMasthead(c, comic, W, H, opts.onLoad);
+  if (page.back) drawBackOverlay(c, comic, page, W, H, opts.onLoad);
   // selection
   if (opts.sel && opts.sel.ei >= 0) {
     const h = out.hit.find(o => o.pi === opts.sel.pi && o.ei === opts.sel.ei);
@@ -1493,26 +1493,7 @@ function renderPage(c, comic, page, W, H, opts = {}) {
   }
   c.restore(); return out;
 }
-function drawMasthead(c, comic, W, H) {
-  const ink = TH.ink; c.save(); c.textAlign = 'center'; c.textBaseline = 'middle'; c.lineJoin = 'round';
-  const title = (comic.title || 'UNTITLED').toUpperCase(); let fs = W * 0.17; c.font = `${fs}px ${F_TITLE}`; while (c.measureText(title).width > W * 0.9 && fs > 20) { fs -= 2; c.font = `${fs}px ${F_TITLE}`; }
-  const ty = H * 0.11; const lw = fs * 0.1;
-  c.lineWidth = lw * 2.6; c.strokeStyle = ink; c.strokeText(title, W / 2 + lw * 0.9, ty + lw * 0.9); c.strokeText(title, W / 2, ty);
-  const g = c.createLinearGradient(0, ty - fs / 2, 0, ty + fs / 2); g.addColorStop(0, '#fff36b'); g.addColorStop(0.55, comic.titleCol || '#ffb020'); g.addColorStop(1, '#ef3b36'); c.fillStyle = g; c.fillText(title, W / 2, ty);
-  if (comic.series && comic.series.toUpperCase() !== title) { const ss = W * 0.04; c.font = `${ss}px ${F_TITLE}`; c.lineWidth = ss * 0.25; c.strokeStyle = ink; c.strokeText(comic.series.toUpperCase(), W / 2, ty - fs * 0.62); c.fillStyle = '#fff'; c.fillText(comic.series.toUpperCase(), W / 2, ty - fs * 0.62); }
-  // issue box
-  const bx = W * 0.035, by = H * 0.02, bs = W * 0.13; c.fillStyle = '#fff'; c.fillRect(bx, by, bs, bs * 1.15); c.lineWidth = W * 0.006; c.strokeStyle = ink; c.strokeRect(bx, by, bs, bs * 1.15);
-  c.fillStyle = ink; c.font = `${bs * 0.22}px ${F_UI}`; c.fillText('ISSUE', bx + bs / 2, by + bs * 0.24); c.font = `${bs * 0.62}px ${F_TITLE}`; c.fillText('#' + (comic.issue || 1), bx + bs / 2, by + bs * 0.72);
-  // price
-  c.font = `${W * 0.038}px ${F_TITLE}`; const pt = '$' + (comic.price || 3.99).toFixed(2); c.lineWidth = W * 0.008; c.strokeStyle = ink; c.textAlign = 'right'; c.strokeText(pt, W * 0.965, H * 0.035); c.fillStyle = '#fff'; c.fillText(pt, W * 0.965, H * 0.035);
-  // genre badge
-  const gen = GENRES.find(g => g.k === comic.genre) || GENRES[0]; c.textAlign = 'center'; c.font = `${W * 0.032}px ${F_TITLE}`; const gw = c.measureText(gen.n.toUpperCase()).width + W * 0.05;
-  c.fillStyle = gen.c; rr(c, W * 0.965 - gw, H * 0.94, gw, H * 0.04, H * 0.01); c.fill(); c.lineWidth = W * 0.005; c.strokeStyle = ink; c.stroke(); c.fillStyle = '#fff'; c.lineWidth = W * 0.006; c.strokeText(gen.n.toUpperCase(), W * 0.965 - gw / 2, H * 0.961); c.fillText(gen.n.toUpperCase(), W * 0.965 - gw / 2, H * 0.961);
-  // publisher seal
-  const shop = (GAME.state.shopName || 'Comics'); c.font = `${W * 0.024}px ${F_TITLE}`; c.fillStyle = '#fff'; c.textAlign = 'left'; c.lineWidth = W * 0.005; c.strokeText(shop.toUpperCase(), W * 0.04, H * 0.962); c.fillText(shop.toUpperCase(), W * 0.04, H * 0.962);
-  c.restore();
-}
-function drawBackOverlay(c, comic, page, W, H) {
+function drawBackOverlay(c, comic, page, W, H, onLoad) {
   const ink = TH.ink; c.save(); c.textBaseline = 'middle'; c.lineJoin = 'round';
   if (page.blurb) { const fs = W * 0.042; c.font = `700 ${fs}px ${F_COMIC}`; const lines = wrapText(c, page.blurb, W * 0.74).slice(0, 6); const bw = Math.max(...lines.map(l => c.measureText(l).width)) + fs * 1.6, bh = lines.length * fs * 1.25 + fs;
     const pos = page.blurbPos ?? (page.blurbTop ? 0 : 1); const bx = (W - bw) / 2, by = pos === 0 ? H * 0.06 : pos === 2 ? H * 0.8 - bh : H * 0.55 - bh / 2; c.fillStyle = page.blurbCol || '#ffe680'; c.fillRect(bx, by, bw, bh); c.lineWidth = W * 0.006; c.strokeStyle = ink; c.strokeRect(bx, by, bw, bh);
@@ -1521,7 +1502,7 @@ function drawBackOverlay(c, comic, page, W, H) {
     const bx = W * 0.6, by = H * 0.83, bw = W * 0.33, bh = H * 0.1; c.fillStyle = '#fff'; c.fillRect(bx - 6, by - 6, bw + 12, bh + 34); c.lineWidth = 2; c.strokeStyle = ink; c.strokeRect(bx - 6, by - 6, bw + 12, bh + 34);
     const r = srand(hashStr(comic.id) % 9999); c.fillStyle = ink; let x = bx; while (x < bx + bw) { const w = 1 + Math.floor(r() * 3) * W * 0.002; c.fillRect(x, by, w, bh); x += w + W * 0.002 * (1 + Math.floor(r() * 2)); }
     c.font = `${W * 0.024}px monospace`; c.textAlign = 'center'; c.fillText('$' + (comic.price || 3.99).toFixed(2) + '  ' + String(hashStr(comic.id)).slice(0, 8), bx + bw / 2, by + bh + 14);
-    c.textAlign = 'left'; c.font = `${W * 0.03}px ${F_TITLE}`; c.lineWidth = W * 0.006; c.strokeStyle = ink; c.fillStyle = '#fff'; const t = (GAME.state.shopName || '').toUpperCase(); c.strokeText(t, W * 0.05, H * 0.95); c.fillText(t, W * 0.05, H * 0.95);
+    if (!logoOnBack(c, comic, W, H, onLoad)) { c.textAlign = 'left'; c.font = `${W * 0.03}px ${F_TITLE}`; c.lineWidth = W * 0.006; c.strokeStyle = ink; c.fillStyle = '#fff'; const t = (GAME.state.shopName || '').toUpperCase(); c.strokeText(t, W * 0.05, H * 0.95); c.fillText(t, W * 0.05, H * 0.95); }
   }
   c.restore();
 }
@@ -2266,11 +2247,17 @@ function custGo(cu, target, onArrive, faceYaw) { cu.path = navPath(cu.root.p, ta
 function custInterest(cu, comic) {
   const p = cu.p; let v = p.all ?? (p.likes[comic.genre] ?? 0.15);
   v += Math.min(0.15, comic.pages.length * 0.015); if (coverChar(comic)) v += 0.08;
-  if (comic.price > p.tol) v *= p.tol / comic.price; if (p.collector && comic.issue === 1) v += 0.2;
+  const sp = isSpecialCover(comic); const tol = p.tol * (sp ? (p.collector ? 1.8 : 1.35) : 1);
+  if (sp) v += p.collector ? 0.3 : 0.12; if (comic.cov && comic.cov.stickers && comic.cov.stickers.length) v += 0.03;
+  if (comic.price > tol) v *= tol / comic.price; if (p.collector && comic.issue === 1) v += 0.2;
   return clamp(v, 0, 1);
 }
 function coverChar(comic) { for (const pn of comic.cover.panels) for (const e of pn.el) if (e.t === 'char' && charById(e.cid)) return charById(e.cid); for (const pg of comic.pages) for (const pn of pg.panels) for (const e of pn.el) if (e.t === 'char' && charById(e.cid)) return charById(e.cid); return null; }
 function fmtSay(arr, comic) { const ch = coverChar(comic); const g = GENRES.find(x => x.k === comic.genre)?.n || 'comic'; let s = pick(arr.filter(a => ch || !a.includes('{char}'))); return s.replace('{title}', comic.title).replace('{issue}', comic.issue).replace('{genre}', g).replace('{pages}', comic.pages.length).replace('{price}', comic.price.toFixed(2)).replace('{char}', ch ? ch.name : '').replace('{shop}', GAME.state.shopName); }
+function specialSay(cm, cu) { const f = cm.cov && cm.cov.finish; const L = [];
+  if (f === 'foil') L.push('A foil cover?! Look how it shines!', 'Ooh, shiny! Silver foil!'); if (f === 'holo') L.push('HOLOGRAPHIC?! It\'s like a rainbow!', 'This holo cover is unreal.'); if (f === 'gold') L.push('A GOLD foil edition! Fancy!', 'Gold cover... I have to have it.');
+  if (cm.variant) L.push('Variant cover ' + cm.variant + '! I need every version.', 'Ooh, the ' + cm.variant + ' cover! Rare find.');
+  if (cu.p.collector) L.push('This is going straight into my collection.', 'A collector\'s dream right here.'); return pick(L.length ? L : SAY.like).replace('{title}', cm.title); }
 const SAY = {
   greet: ['What a cute shop!', 'Hi there!', 'Ooh, {shop}! I love this place.', 'Hello! Just browsing.', 'Something smells like fresh comics.'],
   like: ['Ooh, {title}! This looks awesome!', '{pages} pages of {genre}? Yes please!', 'Is that {char}? I love {char}!', 'This cover is incredible.', 'Issue #{issue}! I need this.', 'Wow, {char} looks so cool here.', 'Finally, some good {genre}!'],
@@ -2348,7 +2335,7 @@ function updateCustomers(dt) {
         if (cu.holding && cu.t > 3.2 && !cu.judged) {
           cu.judged = true; const cm = cu.holding.comic; if (!cm) break; const v = custInterest(cu, cm);
           cu.decide = Math.random() < v * cu.p.buy ? 'buy' : 'pass';
-          if (cu.decide === 'buy') custSay(cu, fmtSay(SAY.like, cm), 3.4, Math.random() < 0.5 ? 'wow' : 'happy'); else custSay(cu, fmtSay(cm.price > cu.p.tol ? SAY.pricey : SAY.meh, cm), 3, 'meh');
+          if (cu.decide === 'buy') custSay(cu, isSpecialCover(cm) && Math.random() < 0.75 ? specialSay(cm, cu) : fmtSay(SAY.like, cm), 3.4, Math.random() < 0.5 ? 'wow' : 'happy'); else custSay(cu, fmtSay(cm.price > cu.p.tol * (isSpecialCover(cm) ? 1.35 : 1) ? SAY.pricey : SAY.meh, cm), 3, 'meh');
           if (cu.decide === 'buy' && Math.random() < cu.p.read) { const seat = freeSeat(); if (seat) cu.decide = 'read', cu.seatInfo = seat; }
         }
         if (cu.judged && cu.t > 5.6) {
@@ -3113,11 +3100,12 @@ function drawBoardComics(c, P) {
   if (CO.sketch) return drawBoardSketch(c, P);
   const cm = CO.comic; const pi = CO.page;
   P.btn(24, 20, 100, 76, '◀', () => stepPage(-1), { dis: pi === -1, fs: 34 }); P.btn(900, 20, 100, 76, '▶', () => stepPage(1), { dis: pi === -2, fs: 34 });
-  P.text(pi === -2 ? 'BACK COVER' : pi < 0 ? 'COVER' : `PAGE ${pi + 1} of ${cm.pages.length}`, 512, 50, { title: 1, s: 48, al: 'center', col: TH.ink }); P.text(cm.title + ' #' + cm.issue + (cm.published ? '  •  PUBLISHED' : ''), 512, 88, { s: 22, al: 'center', col: '#7a8399', max: 700 });
+  P.text(pi === -2 ? 'BACK COVER' : pi < 0 ? 'COVER' : `PAGE ${pi + 1} of ${cm.pages.length}`, 512, 50, { title: 1, s: 48, al: 'center', col: TH.ink }); P.text(comicLabel(cm) + (cm.published ? '  •  PUBLISHED' : ''), 512, 88, { s: 22, al: 'center', col: '#7a8399', max: 700 });
   const [x, y, w, h] = pageRect(); CO.pageRect = [x, y, w, h];
   c.fillStyle = 'rgba(0,0,0,.18)'; c.fillRect(x + 10, y + 10, w, h);
   c.save(); c.translate(x, y); const out = renderPage(c, cm, curPage(), w, h, { sel: CO.panelEdit ? null : CO.sel, hiPanel: CO.sel || CO.panelEdit ? -1 : CO.selPanel, onLoad: () => { STUDIO.boardDirty = true; } }); c.restore();
   CO.lastRender = out; c.lineWidth = 3; c.strokeStyle = TH.ink; c.strokeRect(x, y, w, h);
+  if (coverEditOn()) { drawCoverOverlay(c, out, x, y); P.area(x - 30, y - 30, w + 60, h + 60, { down: (px, py) => coverDown(px - x, py - y, w, h), move: (px, py) => coverMove(px - x, py - y, w, h), up: () => coverUp() }, 'pagearea'); return; }
   if (CO.panelEdit) { drawPanelEditOverlay(c, out, x, y); P.area(x - 26, y - 26, w + 52, h + 52, { down: (px, py, hand) => pageDown(px - x, py - y, hand, w, h), move: (px, py) => pageMove(px - x, py - y, w, h), up: (px, py) => pageUp(px - x, py - y, w, h) }, 'pagearea'); return; }
   { const se = selElem(); if (se && se.t === 'bubble' && TAILED[se.style] && !se.noTail) { const t = tipScreen(se, CO.sel.pi); if (t) { c.save(); c.translate(x, y); c.lineWidth = 3; c.strokeStyle = TH.red; c.setLineDash([8, 6]); c.beginPath(); c.moveTo(t[2], t[3]); c.lineTo(t[0], t[1]); c.stroke(); c.setLineDash([]); c.fillStyle = TH.ink; c.beginPath(); c.arc(t[0] + 2, t[1] + 2, 15, 0, TAU); c.fill(); c.fillStyle = TH.red; c.beginPath(); c.arc(t[0], t[1], 15, 0, TAU); c.fill(); c.lineWidth = 4; c.strokeStyle = '#fff'; c.stroke(); c.restore(); } } }
   // joint handles
@@ -3259,11 +3247,11 @@ function studioStickTick(dt) { // resize/rotate selected element while dragging
 function startSketch(kind, rec) { const W = kind === 'bg' ? 768 : 512, H = 512; CO.sketch = { kind, c: mkCanvas(W, H), undo: [], redo: [], edit: rec || null }; CO.artSel = null;
   if (rec) { const S0 = CO.sketch; const im = new Image(); im.onload = () => { if (CO.sketch !== S0) return; S0.c.getContext('2d').drawImage(im, 0, 0, W, H); STUDIO.boardDirty = true; updateDrawLayer(); }; im.src = rec.img; } const a = W / H; const bw = 960, bh = bw / a; CO.sketch.rect = [(1024 - bw) / 2, 200, bw, bh]; STUDIO.boardDirty = true; [STUDIO.left, STUDIO.right].forEach(p => p.refresh()); updateDrawLayer(); }
 function drawBoardSketch(c, P) {
-  const S = CO.sketch; P.text(S.edit ? 'EDITING “' + S.edit.name.toUpperCase() + '”' : S.kind === 'gear' ? 'DRAW ' + ({ hand: 'HAND GEAR', head: 'HEADGEAR', face: 'FACE GEAR', back: 'BACK GEAR' }[S.slot] || 'GEAR') : S.kind === 'prop' ? 'DRAW A PROP' : 'DRAW A BACKGROUND', 512, 70, { title: 1, s: 60, al: 'center', col: TH.red });
-  P.text(S.kind === 'gear' ? ({ hand: 'Draw it held in the fist. The arrow points away from the hand.', head: 'Draw it on the ghost head — it will sit there on your hero.', face: 'Draw it over the ghost face.', back: 'Draw capes, wings or packs around the ghost body.' }[S.slot]) : S.kind === 'prop' ? 'Anything you draw here becomes a sticker you can place in panels.' : 'This fills a whole panel behind your characters.', 512, 130, { s: 24, al: 'center', col: '#7a8399' });
+  const S = CO.sketch; P.text(S.edit && S.kind !== 'logo' ? 'EDITING “' + S.edit.name.toUpperCase() + '”' : S.kind === 'gear' ? 'DRAW ' + ({ hand: 'HAND GEAR', head: 'HEADGEAR', face: 'FACE GEAR', back: 'BACK GEAR' }[S.slot] || 'GEAR') : S.kind === 'logo' ? 'DRAW YOUR LOGO' : S.kind === 'prop' ? 'DRAW A PROP' : 'DRAW A BACKGROUND', 512, 70, { title: 1, s: 60, al: 'center', col: TH.red });
+  P.text(S.kind === 'gear' ? ({ hand: 'Draw it held in the fist. The arrow points away from the hand.', head: 'Draw it on the ghost head — it will sit there on your hero.', face: 'Draw it over the ghost face.', back: 'Draw capes, wings or packs around the ghost body.' }[S.slot]) : S.kind === 'logo' ? 'Your publisher logo — it goes on every cover and back cover.' : S.kind === 'prop' ? 'Anything you draw here becomes a sticker you can place in panels.' : 'This fills a whole panel behind your characters.', 512, 130, { s: 24, al: 'center', col: '#7a8399' });
   const [x, y, w, h] = S.rect; if (S.kind !== 'bg') { for (let yy = 0; yy < h; yy += 32) for (let xx = 0; xx < w; xx += 32) { c.fillStyle = ((xx + yy) / 32) % 2 ? '#eef1f7' : '#ffffff'; c.fillRect(x + xx, y + yy, 32, 32); } } else { c.fillStyle = '#fff'; c.fillRect(x, y, w, h); }
   if (S.kind === 'gear') drawGearGhost(c, S.slot, x, y, w, h); c.lineWidth = 3; c.strokeStyle = TH.ink; c.strokeRect(x, y, w, h); drawArea(P, x, y, w, h, S.c.width, S.c.height);
-  P.btn(120, y + h + 40, 380, 100, 'SAVE', () => { if (isBlank(S.c)) { toast('Draw something first!', TH.red); return; } KB.open({ title: 'Name it', text: S.edit ? S.edit.name : '', max: 20, done: t => { if (S.kind === 'gear') return finishGearSketch(S, t); const img = S.c.toDataURL('image/webp', 0.9); const id = uid();
+  P.btn(120, y + h + 40, 380, 100, 'SAVE', () => { if (isBlank(S.c)) { toast('Draw something first!', TH.red); return; } if (S.kind === 'logo') { const L0 = GAME.state.logo; GAME.state.logo = { img: S.c.toDataURL('image/png'), ver: ((L0 && L0.ver) || 0) + 1 }; CO.sketch = null; refreshAllComics(); COVER_PREV.clear(); saveSoon(); toast('Logo saved — it’s on all your covers!', TH.green); STUDIO.boardDirty = true; [STUDIO.left, STUDIO.right].forEach(p => p.refresh()); updateDrawLayer(); return; } KB.open({ title: 'Name it', text: S.edit ? S.edit.name : '', max: 20, done: t => { if (S.kind === 'gear') return finishGearSketch(S, t); const img = S.c.toDataURL('image/webp', 0.9); const id = uid();
     if (S.edit) { S.edit.img = img; S.edit.name = t || S.edit.name; CO.addTab = S.kind === 'prop' ? 'props' : 'bgs'; CO.sketch = null; refreshAllComics(); saveSoon(); toast('Updated everywhere it’s used!', TH.green); STUDIO.boardDirty = true; [STUDIO.left, STUDIO.right].forEach(p => p.refresh()); updateDrawLayer(); return; } if (S.kind === 'prop') { GAME.state.customProps.push({ id, name: t || 'My Prop', img }); CO.addTab = 'props'; } else { GAME.state.customBgs.push({ id, name: t || 'My Background', img }); CO.addTab = 'bgs'; } CO.sketch = null; saveSoon(); toast('Saved to your library!', TH.green); STUDIO.boardDirty = true; [STUDIO.left, STUDIO.right].forEach(p => p.refresh()); updateDrawLayer(); } }); }, { col: TH.green, title: 1, fs: 48 });
   P.btn(524, y + h + 40, 380, 100, 'CANCEL', () => { const ret = S.ret; CO.sketch = null; if (ret && ret !== 'comics') { setStudioMode(ret); return; } STUDIO.boardDirty = true; [STUDIO.left, STUDIO.right].forEach(p => p.refresh()); updateDrawLayer(); }, { col: '#fff', title: 1, fs: 48 });
 }
@@ -3312,6 +3300,7 @@ function drawRightComics(c, P) {
   if (CO.sketch) { panelBG(c, P, 'SKETCH'); P.text('Use the tools on the left.', 34, 140, { s: 26, col: '#fff' }); P.text('Mirror makes symmetrical shapes easy.', 34, 186, { s: 22, col: '#b9c3e6' }); return; }
   panelBG(c, P, null);
   const tabs = [['add', 'ADD'], ['edit', 'EDIT'], ['layers', 'LAYERS'], ['page', 'PAGE'], ['comic', 'COMIC']];
+  { const cp = curPage(); if (cp && cp.cover) tabs[3][1] = 'COVER'; }
   tabs.forEach(([k, n], i) => P.btn(22 + i * 118, 20, 110, 76, n, () => { CO.tab = k; if (k !== 'page' && CO.panelEdit) setPanelEdit(false); STUDIO.right.refresh(); }, { on: CO.tab === k, title: 1, fs: 30, onCol: TH.red }));
   if (!CO.comic) { P.btn(30, 140, 570, 100, 'NEW COMIC', () => openComic(null), { col: TH.green, title: 1, fs: 44 }); drawComicList(c, P, 270); return; }
   const y0 = 118;
@@ -3484,10 +3473,7 @@ function drawPageTab(c, P, y0) {
     P.btn(30, y0 + 440, 570, 80, pg.barcode !== false ? 'BARCODE & PRICE: ON' : 'BARCODE & PRICE: OFF', () => { coSnap(); pg.barcode = pg.barcode === false; coChanged(); }, { on: pg.barcode !== false, onCol: TH.blue, title: 1, fs: 32 });
     P.btn(30, y0 + 536, 570, 80, 'COPY FRONT COVER ART HERE', () => confirmBox('Replace the back cover art with a copy of the front cover?', () => { coSnap(); pg.panels = JSON.parse(JSON.stringify(CO.comic.cover.panels)); coChanged(); }), { col: '#fff', fs: 26 });
     return; }
-  if (pg.cover) { P.text('This is the COVER', 34, y0 + 30, { title: 1, s: 42, col: TH.yellow }); P.text('Covers are one big panel with your title on top.', 34, y0 + 76, { s: 22, col: '#b9c3e6' });
-    P.btn(30, y0 + 110, 570, 80, pg.titleBack ? 'TITLE: BEHIND ART' : 'TITLE: IN FRONT', () => { coSnap(); pg.titleBack = !pg.titleBack; coChanged(); }, { title: 1, fs: 34 });
-    P.text('Title color', 34, y0 + 230, { s: 26, col: '#fff' }); ['#ffb020', '#ef3b36', '#2ec5ea', '#36c26b', '#ff6fb1', '#8a5cf0', '#ffffff', '#2350d8', '#ff8a2a', '#c0c7d6', '#fff36b', '#16161d'].forEach((col, i) => swatch(c, P, 30 + (i % 6) * 96, y0 + 256 + Math.floor(i / 6) * 92, 80, col, CO.comic.titleCol === col, () => { coSnap(); CO.comic.titleCol = col; coChanged(); }, 'tc' + i));
-    P.btn(30, y0 + 470, 570, 80, 'ADD A PAGE AFTER COVER', () => addPage(-1), { col: TH.green, fs: 28 }); return; }
+  if (pg.cover) return drawCoverTab(c, P, y0);
   P.text(pg.custom ? 'Panel layout — custom (tap one to reset)' : 'Panel layout', 34, y0 + 20, { s: pg.custom ? 24 : 28, col: pg.custom ? TH.yellow : '#fff' });
   LAYOUTS.forEach((L, i) => { const x = 30 + (i % 4) * 146, y = y0 + 44 + Math.floor(i / 4) * 160, w = 132, h = 148; const on = !pg.custom && pg.layout === L.id;
     c.fillStyle = on ? TH.yellow : '#fff'; rr(c, x, y, w, h, 12); c.fill(); c.lineWidth = 3; c.strokeStyle = TH.ink; c.stroke(); const rs = layoutRects(L.id, 0.04, 0.08, 0.75); c.fillStyle = on ? '#fff' : '#dfe6ff'; c.strokeStyle = TH.ink; c.lineWidth = 2; for (const r of rs) { c.fillRect(x + 14 + r[0] * (w - 28), y + 8 + r[1] * (h - 50), r[2] * (w - 28), r[3] * (h - 50)); c.strokeRect(x + 14 + r[0] * (w - 28), y + 8 + r[1] * (h - 50), r[2] * (w - 28), r[3] * (h - 50)); }
@@ -4534,6 +4520,323 @@ function drawPoseStrip(c, P) {
   P.btn(886, 172, 124, 128, '', () => { DRAW.partLock = !DRAW.partLock; STUDIO.boardDirty = true; toast(DRAW.partLock ? 'Strokes stay on the body part you start on' : 'Strokes can cross body parts', DRAW.partLock ? TH.green : TH.yellow); }, { id: 'partlock', on, onCol: TH.green, col: '#fff', dis: forced });
   const tc = on ? '#fff' : TH.ink; P.text('STAY ON', 948, 204, { s: 19, al: 'center', col: tc }); P.text('ONE PART', 948, 230, { s: 19, al: 'center', col: tc }); P.text(on ? 'ON' : 'OFF', 948, 270, { s: 30, al: 'center', col: tc, title: 1 });
   if (forced) { P.text('always on', 948, 318, { s: 16, al: 'center', col: '#7a8399' }); P.text('in poses', 948, 338, { s: 16, al: 'center', col: '#7a8399' }); }
+}
+
+// ---- src/17_cover.js
+// ===================== COVER DESIGNER: titles, badges, stickers, templates, shine, variants, logo =====================
+const COV_ITEMS = [['title', 'Title'], ['series', 'Series line'], ['issue', 'Issue #'], ['price', 'Price'], ['genre', 'Genre badge'], ['logo', 'Your logo'], ['barcode', 'Barcode']];
+const COV_STYLES = { issue: [['box', 'BOX'], ['circle', 'CIRCLE'], ['star', 'STAR'], ['vol', 'VOL.'], ['plain', 'PLAIN']], price: [['plain', 'PLAIN'], ['box', 'BOX'], ['circle', 'CIRCLE']], genre: [['badge', 'BADGE'], ['tab', 'TAB'], ['plain', 'PLAIN']], logo: [['pic', 'PICTURE'], ['text', 'TEXT']] };
+const TITLE_FILLS = [['grad', 'GRADIENT'], ['solid', 'SOLID'], ['chrome', 'CHROME'], ['rainbow', 'RAINBOW'], ['halftone', 'HALFTONE'], ['gold', 'GOLD']];
+const TITLE_FX = [['drop', 'SHADOW'], ['3d', '3D'], ['glow', 'GLOW'], ['none', 'FLAT']];
+const TITLE_SHAPES = [['straight', 'STRAIGHT'], ['arch', 'ARCH'], ['wave', 'WAVE'], ['slant', 'SLANT'], ['grow', 'GROW'], ['dip', 'DIP']];
+const BAND_STYLES = [['none', 'NO BAND'], ['bar', 'BAR'], ['box', 'BOX'], ['slash', 'SLASH']];
+const FINISHES = [['none', 'Matte', 'Plain printed cover'], ['foil', 'Silver Foil', 'Shiny silver streaks'], ['holo', 'Holographic', 'Rainbow shimmer'], ['gold', 'Gold Foil', 'Rich golden sheen']];
+const STICKER_TYPES = [
+  ['burst', 'Starburst', 'NEW!', '#ffd23f', '#16161d'], ['banner', 'Ribbon', '1ST APPEARANCE!', '#ef3b36', '#ffffff'], ['corner', 'Corner', "COLLECTOR'S EDITION", '#2350d8', '#ffffff'],
+  ['circle', 'Round Badge', 'SPECIAL ISSUE', '#36c26b', '#ffffff'], ['box', 'Box', 'PART 1 OF 3', '#ffffff', '#16161d'], ['tag', 'Tag', 'LIMITED!', '#ff8a2a', '#16161d'],
+  ['strip', 'Strip', 'THE BATTLE BEGINS!', '#16161d', '#ffd23f'], ['arrow', 'Arrow', "HE'S BACK!", '#ff6fb1', '#ffffff'], ['stamp', 'Stamp', 'CERTIFIED AWESOME', '#ef3b36', '#ef3b36']
+];
+const STICKER_TEXTS = ['NEW!', '1ST APPEARANCE!', "COLLECTOR'S EDITION", 'SPECIAL ISSUE', 'PART 1 OF 3', 'GIANT-SIZE!', 'ORIGIN STORY', "DON'T MISS IT!", 'THE END?!', 'LIMITED!', 'VARIANT COVER', 'ALL NEW!', 'DOUBLE-SIZED', 'FIRST ISSUE!', 'SHOCKING!', 'BONUS STORY'];
+const COV_COLS = ['#16161d', '#ffffff', '#ef3b36', '#ffb020', '#ffd23f', '#fff36b', '#36c26b', '#2ec5ea', '#2350d8', '#8a5cf0', '#ff6fb1', '#c0c7d6'];
+
+function covDefaults() {
+  return {
+    tpl: 'classic', band: { style: 'none', col: '#ffe9a8' },
+    title: { font: 'bangers', fill: 'grad', c1: '#fff36b', c2: '#ffb020', c3: '#ef3b36', oc: '#16161d', ow: 1, fx: 'drop', fxc: '#16161d', shape: 'straight', x: 0.5, y: 0.11, s: 1, r: 0, hide: false },
+    series: { x: 0.5, y: 0.038, s: 1, col: '#ffffff', hide: false },
+    issue: { x: 0.1, y: 0.075, s: 1, style: 'box', hide: false },
+    price: { x: 0.9, y: 0.035, s: 1, style: 'plain', hide: false },
+    genre: { x: 0.86, y: 0.96, s: 1, style: 'badge', hide: false },
+    logo: { x: 0.14, y: 0.955, s: 1, style: 'pic', hide: false },
+    barcode: { x: 0.84, y: 0.86, s: 1, hide: true },
+    stickers: [], finish: 'none'
+  };
+}
+function coverDesign(comic) {
+  let cv = comic.cov; const D = covDefaults();
+  if (!cv) { cv = comic.cov = D; if (comic.titleCol) cv.title.c2 = comic.titleCol; return cv; }
+  for (const k in D) { if (cv[k] === undefined) cv[k] = D[k]; else if (D[k] && typeof D[k] === 'object' && !Array.isArray(D[k])) for (const kk in D[k]) if (cv[k][kk] === undefined) cv[k][kk] = D[k][kk]; }
+  return cv;
+}
+// ---------- templates (masthead looks; your art, stickers and shine are kept) ----------
+const COVER_TEMPLATES = [
+  ['classic', 'Classic', {}],
+  ['golden', 'Golden Age', { band: { style: 'box', col: '#fff3cf' }, title: { font: 'chunky', fill: 'solid', c2: '#ef3b36', oc: '#16161d', ow: 1, fx: '3d', fxc: '#ffd23f', shape: 'arch', y: 0.14, s: 1 }, series: { col: '#ef3b36', y: 0.03 }, issue: { style: 'circle', x: 0.1, y: 0.07 }, price: { style: 'circle', x: 0.9, y: 0.07 } }],
+  ['modern', 'Modern', { title: { font: 'robot', fill: 'solid', c2: '#ffffff', oc: '#16161d', ow: 0.4, fx: 'drop', fxc: 'rgba(0,0,0,.55)', shape: 'straight', x: 0.5, y: 0.86, s: 0.82 }, series: { y: 0.795, col: '#ffffff' }, issue: { style: 'plain', x: 0.09, y: 0.04 }, price: { x: 0.9, y: 0.04 }, genre: { style: 'tab', x: 0.5, y: 0.965 }, logo: { x: 0.12, y: 0.955 } }],
+  ['manga', 'Manga', { band: { style: 'slash', col: '#ff6fb1' }, title: { font: 'fredoka', fill: 'solid', c2: '#ffffff', oc: '#ef3b36', ow: 1.3, fx: 'drop', fxc: '#16161d', shape: 'straight', y: 0.1, s: 0.95 }, issue: { style: 'vol', x: 0.13, y: 0.21 }, series: { col: '#ffffff', y: 0.182, x: 0.6 }, genre: { style: 'tab' } }],
+  ['horror', 'Horror', { band: { style: 'bar', col: '#16161d' }, title: { font: 'creepy', fill: 'grad', c1: '#e6ff9a', c2: '#7bd14a', c3: '#1f5a1f', oc: '#16161d', ow: 0.8, fx: 'glow', fxc: '#7bd14a', shape: 'wave', y: 0.11, s: 1.05 }, series: { col: '#e6ff9a' }, issue: { style: 'plain' } }],
+  ['retro', 'Retro Pop', { band: { style: 'box', col: '#ffd23f' }, title: { font: 'marker', fill: 'halftone', c2: '#ef3b36', c3: '#8a1010', oc: '#16161d', ow: 1, fx: 'drop', fxc: '#16161d', shape: 'slant', y: 0.14, s: 1 }, issue: { style: 'star', x: 0.1, y: 0.07 }, series: { col: '#16161d', y: 0.03 } }],
+  ['scifi', 'Sci-Fi', { band: { style: 'bar', col: '#0d1b3a' }, title: { font: 'robot', fill: 'chrome', oc: '#0d1b3a', ow: 0.7, fx: 'glow', fxc: '#2ec5ea', shape: 'grow', y: 0.11, s: 0.95 }, series: { col: '#2ec5ea' }, issue: { style: 'plain' }, price: { style: 'box' } }],
+  ['cartoon', 'Cartoon', { title: { font: 'chunky', fill: 'rainbow', oc: '#16161d', ow: 1.3, fx: '3d', fxc: '#16161d', shape: 'wave', y: 0.12, s: 1 }, issue: { style: 'circle' }, price: { style: 'circle' }, series: { col: '#ffffff' } }],
+  ['noir', 'Noir', { band: { style: 'bar', col: '#16161d' }, title: { font: 'bangers', fill: 'solid', c2: '#ffffff', oc: '#16161d', ow: 0.5, fx: 'none', shape: 'straight', x: 0.42, y: 0.1, s: 0.85, r: -3 }, series: { col: '#ef3b36', x: 0.42 }, issue: { style: 'plain', x: 0.88, y: 0.1 }, price: { x: 0.9, y: 0.035 } }]
+];
+function applyCoverTemplate(cv, k) {
+  const T = COVER_TEMPLATES.find(t => t[0] === k); if (!T) return; const D = covDefaults();
+  const keep = { stickers: cv.stickers, finish: cv.finish };
+  for (const kk in D) if (kk !== 'stickers' && kk !== 'finish') cv[kk] = Object.assign({}, D[kk], T[2][kk] || {});
+  Object.assign(cv, keep); cv.tpl = k;
+}
+
+// ---------- drawing ----------
+const HALF_PAT = {};
+function dotPattern(c, col, sz) { const k = col + sz; if (!HALF_PAT[k]) { const p = mkCanvas(sz, sz), x = p.getContext('2d'); x.fillStyle = col; x.beginPath(); x.arc(sz * 0.25, sz * 0.25, sz * 0.2, 0, TAU); x.arc(sz * 0.75, sz * 0.75, sz * 0.2, 0, TAU); x.fill(); HALF_PAT[k] = p; } return c.createPattern(HALF_PAT[k], 'repeat'); }
+function titleLayout(c, T, text, fs) { // per-letter [ch, x, y, rot, scale]
+  const L = [...text]; const ws = L.map(ch => c.measureText(ch).width); const out = [];
+  if (T.shape === 'grow') { const tot0 = ws.reduce((a, b) => a + b, 0); const sc = ws.map((w, i) => { const cx = ws.slice(0, i).reduce((a, b) => a + b, 0) + w / 2 - tot0 / 2; return 0.72 + 0.5 * (1 - Math.min(1, Math.abs(cx) / (tot0 / 2 || 1))); });
+    const tot = ws.reduce((a, w, i) => a + w * sc[i], 0); let x = -tot / 2; L.forEach((ch, i) => { const w = ws[i] * sc[i]; out.push([ch, x + w / 2, fs * 0.3 * (1 - sc[i]), 0, sc[i]]); x += w; }); return { L: out, w: tot }; }
+  const tot = ws.reduce((a, b) => a + b, 0); let x = -tot / 2;
+  L.forEach((ch, i) => { const w = ws[i]; const cx = x + w / 2; let y = 0, r = 0;
+    if (T.shape === 'arch' || T.shape === 'dip') { const R = Math.max(tot * 0.95, fs * 2); const a = cx / R; const sg = T.shape === 'arch' ? 1 : -1; y = sg * R * (1 - Math.cos(a)); r = sg * a; out.push([ch, R * Math.sin(a), y - sg * fs * 0.06 * 0, r, 1]); x += w; return; }
+    if (T.shape === 'wave') { y = Math.sin(i * 0.95) * fs * 0.11; r = Math.cos(i * 0.95) * 0.13; }
+    out.push([ch, cx, y, r, 1]); x += w; });
+  return { L: out, w: tot };
+}
+function titleFill(c, T, fs, lx, tot) {
+  if (T.fill === 'solid' || T.fill === 'halftone') return T.c2;
+  if (T.fill === 'chrome') { const g = c.createLinearGradient(0, -fs * 0.45, 0, fs * 0.45); g.addColorStop(0, '#ffffff'); g.addColorStop(0.42, '#c9d3e6'); g.addColorStop(0.5, '#5d6982'); g.addColorStop(0.62, '#e8eef8'); g.addColorStop(1, '#8f9bb3'); return g; }
+  if (T.fill === 'gold') { const g = c.createLinearGradient(0, -fs * 0.45, 0, fs * 0.45); g.addColorStop(0, '#fff6c2'); g.addColorStop(0.45, '#ffd23f'); g.addColorStop(0.52, '#a8700f'); g.addColorStop(0.7, '#ffe27a'); g.addColorStop(1, '#b8860b'); return g; }
+  if (T.fill === 'rainbow') { const g = c.createLinearGradient(-lx - tot / 2, 0, -lx + tot / 2, 0); ['#ef3b36', '#ff8a2a', '#ffd23f', '#36c26b', '#2ec5ea', '#2350d8', '#8a5cf0'].forEach((col, i, a) => g.addColorStop(i / (a.length - 1), col)); return g; }
+  const g = c.createLinearGradient(0, -fs * 0.45, 0, fs * 0.45); g.addColorStop(0, T.c1); g.addColorStop(0.55, T.c2); g.addColorStop(1, T.c3); return g;
+}
+function drawCoverTitle(c, comic, cv, W, H) {
+  const T = cv.title; const text = (comic.title || 'UNTITLED').toUpperCase(); const FN = fontOf(T.font, 'bangers');
+  let fs = W * 0.17 * T.s; const fz = (f) => `${FN.w}${f}px ${FN.f}`; c.font = fz(fs);
+  const maxW = W * 0.92 * Math.max(1, T.s); while (c.measureText(text).width > maxW && fs > 14) { fs -= 2; c.font = fz(fs); }
+  const lay = titleLayout(c, T, text, fs); const lw = fs * 0.1 * T.ow; const cx = T.x * W, cy = T.y * H;
+  // band behind
+  const bh = fs * 1.3; const band = cv.band || {};
+  if (band.style && band.style !== 'none') { c.save(); c.translate(cx, cy); c.rotate((T.r || 0) * D2R); c.fillStyle = band.col; c.strokeStyle = TH.ink; c.lineWidth = W * 0.008;
+    if (band.style === 'bar') { c.fillRect(-W * 2, -bh / 2, W * 4, bh); c.beginPath(); c.moveTo(-W * 2, -bh / 2); c.lineTo(W * 2, -bh / 2); c.moveTo(-W * 2, bh / 2); c.lineTo(W * 2, bh / 2); c.stroke(); }
+    else if (band.style === 'box') { const bw = lay.w + fs * 0.7; rr(c, -bw / 2, -bh / 2 - fs * 0.05, bw, bh + fs * (T.shape === 'arch' || T.shape === 'dip' ? 0.35 : 0.1), fs * 0.12); c.fill(); c.stroke(); }
+    else { const bw = lay.w + fs * 0.9, k = bh * 0.45; c.beginPath(); c.moveTo(-bw / 2 + k, -bh / 2); c.lineTo(bw / 2 + k, -bh / 2); c.lineTo(bw / 2 - k, bh / 2); c.lineTo(-bw / 2 - k, bh / 2); c.closePath(); c.fill(); c.stroke(); }
+    c.restore(); }
+  c.save(); c.translate(cx, cy); c.rotate((T.r || 0) * D2R); if (T.shape === 'slant') c.transform(1, 0, -0.24, 1, 0, 0);
+  c.textAlign = 'center'; c.textBaseline = 'middle'; c.lineJoin = 'round'; c.font = fz(fs);
+  const each = (fn) => lay.L.forEach(([ch, x, y, r, s]) => { c.save(); c.translate(x, y); c.rotate(r); if (s !== 1) c.scale(s, s); fn(ch, x); c.restore(); });
+  if (T.fx === '3d') { const n = 9, d = fs * 0.11; for (let i = n; i >= 1; i--) { const o = d * i / n; each(ch => { c.fillStyle = T.fxc; c.fillText(ch, o, o); if (i === n && lw > 0) { c.lineWidth = lw * 2; c.strokeStyle = TH.ink; c.strokeText(ch, o, o); } }); } }
+  else if (T.fx === 'drop') each(ch => { c.lineWidth = Math.max(lw, fs * 0.05) * 2.6; c.strokeStyle = T.fxc; c.strokeText(ch, fs * 0.09, fs * 0.09); c.fillStyle = T.fxc; c.fillText(ch, fs * 0.09, fs * 0.09); });
+  if (lw > 0) each(ch => { c.lineWidth = lw * 2.6; c.strokeStyle = T.oc; c.strokeText(ch, 0, 0); });
+  if (T.fx === 'glow') { c.save(); c.shadowColor = T.fxc; c.shadowBlur = fs * 0.35; each((ch, x) => { c.fillStyle = titleFill(c, T, fs, x, lay.w); c.fillText(ch, 0, 0); }); c.restore(); }
+  each((ch, x) => { c.fillStyle = titleFill(c, T, fs, x, lay.w); c.fillText(ch, 0, 0); if (T.fill === 'halftone') { c.fillStyle = dotPattern(c, T.c3, Math.max(4, Math.round(fs * 0.09))); c.fillText(ch, 0, 0); } if (T.fill === 'chrome' || T.fill === 'gold') { c.save(); c.globalAlpha = 0.55; c.fillStyle = '#ffffff'; c.fillText(ch, -fs * 0.015, -fs * 0.03); c.restore(); c.fillStyle = titleFill(c, T, fs, x, lay.w); c.globalAlpha = 0.7; c.fillText(ch, 0, 0); c.globalAlpha = 1; } });
+  c.restore();
+  const arc = T.shape === 'arch' || T.shape === 'dip' ? fs * 0.45 : T.shape === 'wave' ? fs * 0.2 : 0;
+  return { id: 'title', x: cx, y: cy + (T.shape === 'arch' ? arc / 2 : T.shape === 'dip' ? -arc / 2 : 0), w: lay.w + lw * 2 + fs * 0.25, h: fs * 1.05 + arc, r: T.r || 0 };
+}
+function strokeFillText(c, t, x, y, fill, stroke, lw) { if (lw > 0) { c.lineWidth = lw; c.strokeStyle = stroke; c.strokeText(t, x, y); } c.fillStyle = fill; c.fillText(t, x, y); }
+function drawCoverItem(c, comic, cv, id, W, H, onLoad) {
+  const it = cv[id]; if (!it || it.hide) return null; const ink = TH.ink; const x = it.x * W, y = it.y * H, s = it.s || 1;
+  c.save(); c.translate(x, y); c.textAlign = 'center'; c.textBaseline = 'middle'; c.lineJoin = 'round'; let bw = 0, bh = 0;
+  if (id === 'series') { const t = (comic.series || '').toUpperCase(); if (!t || t === (comic.title || '').toUpperCase()) { c.restore(); return null; } const ss = W * 0.04 * s; c.font = `${ss}px ${F_TITLE}`; strokeFillText(c, t, 0, 0, it.col, ink, ss * 0.25); bw = c.measureText(t).width + ss * 0.4; bh = ss * 1.2; }
+  else if (id === 'issue') { const num = '#' + (comic.issue || 1) + (comic.variant ? ' ' + comic.variant : ''); const bs = W * 0.13 * s; c.lineWidth = W * 0.006;
+    if (it.style === 'box') { c.fillStyle = '#fff'; c.fillRect(-bs / 2, -bs * 0.575, bs, bs * 1.15); c.strokeStyle = ink; c.strokeRect(-bs / 2, -bs * 0.575, bs, bs * 1.15); c.fillStyle = ink; c.font = `${bs * 0.2}px ${F_UI}`; c.fillText(comic.variant ? 'VARIANT' : 'ISSUE', 0, -bs * 0.34); c.font = `${bs * (num.length > 3 ? 0.42 : 0.6)}px ${F_TITLE}`; c.fillText(num, 0, bs * 0.15); bw = bs; bh = bs * 1.15; }
+    else if (it.style === 'circle') { c.fillStyle = '#fff'; c.beginPath(); c.arc(0, 0, bs * 0.55, 0, TAU); c.fill(); c.strokeStyle = ink; c.stroke(); c.lineWidth = W * 0.003; c.beginPath(); c.arc(0, 0, bs * 0.47, 0, TAU); c.stroke(); c.fillStyle = ink; c.font = `${bs * 0.16}px ${F_UI}`; c.fillText('NO.', 0, -bs * 0.26); c.font = `${bs * (num.length > 3 ? 0.36 : 0.5)}px ${F_TITLE}`; c.fillText(num.slice(1), 0, bs * 0.08); bw = bh = bs * 1.12; }
+    else if (it.style === 'star') { star(c, 0, 0, 12, bs * 0.62, bs * 0.45, 0.1); c.fillStyle = '#ffd23f'; c.fill(); c.strokeStyle = ink; c.stroke(); c.fillStyle = ink; c.font = `${bs * (num.length > 3 ? 0.32 : 0.46)}px ${F_TITLE}`; c.fillText(num, 0, bs * 0.03); bw = bh = bs * 1.25; }
+    else if (it.style === 'vol') { const t = 'VOL. ' + (comic.issue || 1) + (comic.variant ? comic.variant : ''); c.font = `${bs * 0.36}px ${F_TITLE}`; const tw = c.measureText(t).width; c.fillStyle = ink; c.fillRect(-tw / 2 - bs * 0.12, -bs * 0.24, tw + bs * 0.24, bs * 0.48); c.fillStyle = '#fff'; c.fillText(t, 0, bs * 0.02); bw = tw + bs * 0.3; bh = bs * 0.52; }
+    else { c.font = `${bs * 0.55}px ${F_TITLE}`; strokeFillText(c, num, 0, 0, '#fff', ink, bs * 0.1); bw = c.measureText(num).width + bs * 0.2; bh = bs * 0.65; } }
+  else if (id === 'price') { const pt = '$' + (comic.price || 3.99).toFixed(2); const fsz = W * 0.038 * s; c.font = `${fsz}px ${F_TITLE}`; const tw = c.measureText(pt).width;
+    if (it.style === 'box') { c.fillStyle = '#fff'; c.fillRect(-tw / 2 - fsz * 0.3, -fsz * 0.62, tw + fsz * 0.6, fsz * 1.24); c.lineWidth = W * 0.005; c.strokeStyle = ink; c.strokeRect(-tw / 2 - fsz * 0.3, -fsz * 0.62, tw + fsz * 0.6, fsz * 1.24); c.fillStyle = ink; c.fillText(pt, 0, fsz * 0.04); bw = tw + fsz * 0.7; bh = fsz * 1.35; }
+    else if (it.style === 'circle') { const r = Math.max(tw * 0.62, fsz * 0.95); c.fillStyle = '#ef3b36'; c.beginPath(); c.arc(0, 0, r, 0, TAU); c.fill(); c.lineWidth = W * 0.005; c.strokeStyle = ink; c.stroke(); c.fillStyle = '#fff'; c.fillText(pt, 0, fsz * 0.04); bw = bh = r * 2.1; }
+    else { strokeFillText(c, pt, 0, 0, '#fff', ink, W * 0.008); bw = tw + fsz * 0.3; bh = fsz * 1.2; } }
+  else if (id === 'genre') { const gen = GENRES.find(g => g.k === comic.genre) || GENRES[0]; const t = gen.n.toUpperCase(); const fsz = W * 0.032 * s; c.font = `${fsz}px ${F_TITLE}`; const gw = c.measureText(t).width + fsz * 1.5, gh = H * 0.04 * s;
+    if (it.style === 'plain') { strokeFillText(c, t, 0, 0, gen.c, ink, W * 0.007); bw = gw; bh = gh; }
+    else { c.fillStyle = gen.c; if (it.style === 'tab') { c.beginPath(); c.moveTo(-gw / 2 - gh * 0.4, gh / 2); c.lineTo(-gw / 2, -gh / 2); c.lineTo(gw / 2, -gh / 2); c.lineTo(gw / 2 + gh * 0.4, gh / 2); c.closePath(); } else rr(c, -gw / 2, -gh / 2, gw, gh, gh * 0.25); c.fill(); c.lineWidth = W * 0.005; c.strokeStyle = ink; c.stroke(); strokeFillText(c, t, 0, gh * 0.04, '#fff', ink, W * 0.006); bw = gw + gh * 0.8; bh = gh; } }
+  else if (id === 'logo') { const L = GAME.state.logo; const im = L && it.style !== 'text' ? cachedImg('logo:' + (L.ver || 0), L.img, onLoad) : null;
+    if (im) { const sz = W * 0.15 * s; c.drawImage(im, -sz / 2, -sz / 2, sz, sz); bw = bh = sz; }
+    else if (L && it.style !== 'text') { bw = bh = W * 0.15 * s; }
+    else { const shop = (GAME.state.shopName || 'Comics').toUpperCase(); const fsz = W * 0.024 * s; c.font = `${fsz}px ${F_TITLE}`; strokeFillText(c, shop, 0, 0, '#fff', ink, W * 0.005); bw = c.measureText(shop).width + fsz * 0.4; bh = fsz * 1.3; } }
+  else if (id === 'barcode') { const bw0 = W * 0.22 * s, bh0 = W * 0.13 * s; c.fillStyle = '#fff'; c.fillRect(-bw0 / 2, -bh0 / 2, bw0, bh0); c.lineWidth = W * 0.003; c.strokeStyle = ink; c.strokeRect(-bw0 / 2, -bh0 / 2, bw0, bh0);
+    const r = srand(hashStr(comic.id) % 9999); c.fillStyle = ink; let xx = -bw0 * 0.42; while (xx < bw0 * 0.42) { const w = (1 + Math.floor(r() * 3)) * W * 0.0016; c.fillRect(xx, -bh0 * 0.38, w, bh0 * 0.56); xx += w + W * 0.0018 * (1 + Math.floor(r() * 2)); }
+    c.font = `${bh0 * 0.16}px monospace`; c.fillText(String(hashStr(comic.id)).slice(0, 8), 0, bh0 * 0.33); bw = bw0; bh = bh0; }
+  c.restore(); return { id, x, y, w: bw, h: bh, r: 0 };
+}
+function fitText(c, t, maxW, maxH, font, lines2 = true) { let fs = maxH; c.font = `${fs}px ${font}`; let ls = [t];
+  for (let i = 0; i < 40; i++) { c.font = `${fs}px ${font}`; ls = lines2 && c.measureText(t).width > maxW && t.includes(' ') ? wrapText(c, t, maxW) : [t]; if (ls.length <= 2 && Math.max(...ls.map(l => c.measureText(l).width)) <= maxW && ls.length * fs * 1.02 <= maxH * 1.05) break; fs *= 0.92; }
+  return { fs, ls }; }
+function drawSticker(c, st, W, H) {
+  const ink = TH.ink; const u = W * 0.1 * (st.s || 1); const t = (st.text || '').toUpperCase(); const col = st.col, tc = st.tc;
+  c.save(); c.translate(st.x * W, st.y * H); c.rotate((st.r || 0) * D2R); c.lineJoin = 'round'; c.textAlign = 'center'; c.textBaseline = 'middle'; c.lineWidth = Math.max(1.5, u * 0.06); c.strokeStyle = ink;
+  const txt = (mw, mh, oy = 0, rot = 0, outline = 0) => { const { fs, ls } = fitText(c, t, mw, mh, F_TITLE); c.save(); c.rotate(rot); c.font = `${fs}px ${F_TITLE}`; ls.forEach((l, i) => { const yy = oy + (i - (ls.length - 1) / 2) * fs * 0.98; if (outline) { c.lineWidth = fs * 0.18; c.strokeStyle = ink; c.strokeText(l, 0, yy); } c.fillStyle = tc; c.fillText(l, 0, yy); }); c.restore(); };
+  let bw = u * 2, bh = u * 2;
+  switch (st.k) {
+    case 'burst': star(c, 0, 0, 14, u, u * 0.74, 0.1); c.fillStyle = col; c.fill(); c.stroke(); txt(u * 1.3, u * 0.62); break;
+    case 'banner': { c.font = `${u * 0.42}px ${F_TITLE}`; const w = Math.min(W * 0.85, Math.max(u * 2, c.measureText(t).width + u * 0.8)), h = u * 0.62; bw = w + u * 0.9; bh = h * 1.4;
+      c.fillStyle = lighten(col, -0.35); for (const sg of [-1, 1]) { c.beginPath(); c.moveTo(sg * (w / 2 - u * 0.1), -h * 0.2); c.lineTo(sg * (w / 2 + u * 0.42), -h * 0.2); c.lineTo(sg * (w / 2 + u * 0.24), h * 0.32); c.lineTo(sg * (w / 2 + u * 0.42), h * 0.72); c.lineTo(sg * (w / 2 - u * 0.1), h * 0.72); c.closePath(); c.fill(); c.stroke(); }
+      c.fillStyle = col; c.beginPath(); c.moveTo(-w / 2, -h / 2); c.quadraticCurveTo(0, -h * 0.75, w / 2, -h / 2); c.lineTo(w / 2, h / 2); c.quadraticCurveTo(0, h * 0.25, -w / 2, h / 2); c.closePath(); c.fill(); c.stroke(); txt(w - u * 0.4, h * 0.62, -h * 0.08); break; }
+    case 'corner': c.fillStyle = col; c.beginPath(); c.moveTo(-u, -u); c.lineTo(u, -u); c.lineTo(u, u); c.closePath(); c.fill(); c.stroke(); c.save(); c.translate(u * 0.36, -u * 0.36); txt(u * 1.25, u * 0.4, 0, PI / 4); c.restore(); break;
+    case 'circle': c.fillStyle = col; c.beginPath(); c.arc(0, 0, u * 0.82, 0, TAU); c.fill(); c.stroke(); c.lineWidth = u * 0.03; c.strokeStyle = tc; c.beginPath(); c.arc(0, 0, u * 0.7, 0, TAU); c.stroke(); txt(u * 1.15, u * 0.7); bw = bh = u * 1.7; break;
+    case 'box': { c.font = `${u * 0.36}px ${F_TITLE}`; const w = Math.min(W * 0.7, Math.max(u * 1.6, c.measureText(t).width * 0.62 + u * 0.6)), h = u * 0.9; c.fillStyle = ink; c.fillRect(-w / 2 + u * 0.08, -h / 2 + u * 0.08, w, h); c.fillStyle = col; c.fillRect(-w / 2, -h / 2, w, h); c.strokeRect(-w / 2, -h / 2, w, h); txt(w - u * 0.3, h * 0.8); bw = w + u * 0.2; bh = h + u * 0.2; break; }
+    case 'tag': { const w = u * 1.9, h = u * 0.95; c.fillStyle = col; c.beginPath(); c.moveTo(-w / 2, -h / 2); c.lineTo(w / 2 - h * 0.45, -h / 2); c.lineTo(w / 2, 0); c.lineTo(w / 2 - h * 0.45, h / 2); c.lineTo(-w / 2, h / 2); c.closePath(); c.fill(); c.stroke(); c.fillStyle = '#fff'; c.beginPath(); c.arc(w / 2 - h * 0.38, 0, h * 0.1, 0, TAU); c.fill(); c.stroke(); c.save(); c.translate(-h * 0.25, 0); txt(w - h * 0.85, h * 0.72, 0, 0); c.restore(); bw = w; bh = h; break; }
+    case 'strip': { const w = W * 0.96 * Math.min(1.2, st.s || 1), h = u * 0.56; c.fillStyle = col; c.fillRect(-w / 2, -h / 2, w, h); c.beginPath(); c.moveTo(-w / 2, -h / 2); c.lineTo(w / 2, -h / 2); c.moveTo(-w / 2, h / 2); c.lineTo(w / 2, h / 2); c.stroke(); txt(w - u * 0.4, h * 0.78); bw = w; bh = h; break; }
+    case 'arrow': { const w = u * 2.3, h = u * 0.8; c.fillStyle = col; c.beginPath(); c.moveTo(-w / 2, -h * 0.35); c.lineTo(w / 2 - h * 0.6, -h * 0.35); c.lineTo(w / 2 - h * 0.6, -h * 0.65); c.lineTo(w / 2, 0); c.lineTo(w / 2 - h * 0.6, h * 0.65); c.lineTo(w / 2 - h * 0.6, h * 0.35); c.lineTo(-w / 2, h * 0.35); c.closePath(); c.fill(); c.stroke(); c.save(); c.translate(-h * 0.25, 0); txt(w - h * 1.0, h * 0.6, 0, 0, 1); c.restore(); bw = w; bh = h * 1.3; break; }
+    case 'stamp': { c.globalAlpha = 0.88; c.strokeStyle = col; c.lineWidth = u * 0.09; c.beginPath(); c.arc(0, 0, u * 0.85, 0, TAU); c.stroke(); c.lineWidth = u * 0.03; c.beginPath(); c.arc(0, 0, u * 0.68, 0, TAU); c.stroke();
+      for (let i = 0; i < 2; i++) { c.save(); c.rotate(i ? PI : 0); star(c, 0, -u * 0.76, 5, u * 0.07, u * 0.03, 0); c.fillStyle = col; c.fill(); c.restore(); }
+      c.fillStyle = 'rgba(255,255,255,.55)'; c.fillRect(-u * 0.95, -u * 0.22, u * 1.9, u * 0.44); c.strokeRect(-u * 0.95, -u * 0.22, u * 1.9, u * 0.44); txt(u * 1.75, u * 0.36); bw = bh = u * 1.9; break; }
+  }
+  c.restore(); return { x: st.x * W, y: st.y * H, w: bw, h: bh, r: st.r || 0 };
+}
+function drawFinish(c, kind, W, H, seed) {
+  if (!kind || kind === 'none') return; const R = srand(seed || 7);
+  c.save();
+  if (kind === 'holo') { c.globalCompositeOperation = 'overlay'; const g = c.createLinearGradient(0, 0, W, H); ['#ff5ca8', '#ffd23f', '#5cffb0', '#4cc3ff', '#b07bff', '#ff5ca8', '#ffd23f'].forEach((col, i, a) => g.addColorStop(i / (a.length - 1), col)); c.globalAlpha = 0.38; c.fillStyle = g; c.fillRect(0, 0, W, H); }
+  if (kind === 'gold') { c.globalCompositeOperation = 'soft-light'; const g = c.createLinearGradient(0, 0, W, H); g.addColorStop(0, '#fff6c8'); g.addColorStop(0.5, '#f5c542'); g.addColorStop(1, '#fff6c8'); c.globalAlpha = 0.7; c.fillStyle = g; c.fillRect(0, 0, W, H); }
+  if (kind === 'foil') { c.globalCompositeOperation = 'overlay'; c.globalAlpha = 0.2; c.fillStyle = '#d8e2f2'; c.fillRect(0, 0, W, H); }
+  // diagonal light streaks
+  c.globalCompositeOperation = 'screen'; c.globalAlpha = 1;
+  for (let i = 0; i < 3; i++) { const off = (0.15 + i * 0.32 + R() * 0.08) * (W + H); const g = c.createLinearGradient(off - W * 0.12, 0, off + W * 0.12 - H * 0.6, H * 0.6);
+    const hi = kind === 'gold' ? 'rgba(255,226,140,' : kind === 'holo' ? 'rgba(220,240,255,' : 'rgba(255,255,255,'; g.addColorStop(0, hi + '0)'); g.addColorStop(0.5, hi + (i === 1 ? 0.4 : 0.2) * (kind === 'gold' ? 0.8 : 1) + ')'); g.addColorStop(1, hi + '0)'); c.fillStyle = g; c.fillRect(0, 0, W, H); }
+  // sparkles
+  c.globalCompositeOperation = 'source-over';
+  for (let i = 0; i < 16; i++) { const x = R() * W, y = R() * H, r = W * (0.008 + R() * 0.018); star(c, x, y, 4, r, r * 0.22, 0); c.fillStyle = kind === 'gold' ? '#fff3b0' : '#ffffff'; c.globalAlpha = 0.6 + R() * 0.4; c.fill(); }
+  c.restore();
+}
+// replaces the old fixed masthead; returns hit boxes for the cover editor
+function drawMasthead(c, comic, W, H, onLoad) {
+  const cv = coverDesign(comic); const boxes = []; c.save(); c.beginPath(); c.rect(0, 0, W, H); c.clip();
+  if (!cv.title.hide) boxes.push(drawCoverTitle(c, comic, cv, W, H));
+  for (const [id] of COV_ITEMS) { if (id === 'title') continue; const b = drawCoverItem(c, comic, cv, id, W, H, onLoad); if (b) boxes.push(b); }
+  cv.stickers.forEach((st, i) => { const b = drawSticker(c, st, W, H); b.id = 'st' + i; boxes.push(b); });
+  drawFinish(c, cv.finish, W, H, hashStr(comic.id) % 997);
+  c.restore(); return boxes;
+}
+function logoOnBack(c, comic, W, H, onLoad) { // back cover publisher mark; true if drawn
+  const L = GAME.state.logo; const cv = coverDesign(comic); if (!L || cv.logo.style === 'text') return false; const im = cachedImg('logo:' + (L.ver || 0), L.img, onLoad); if (!im) return true;
+  const sz = W * 0.14; c.drawImage(im, W * 0.04, H * 0.965 - sz, sz, sz); return true;
+}
+
+// ---------- shop: variants & customer appeal ----------
+function isSpecialCover(cm) { const cv = cm.cov; return !!(cm.variant || (cv && cv.finish && cv.finish !== 'none')); }
+function makeVariant(cm) {
+  const base = cm.variantOf ? (comicById(cm.variantOf) || cm) : cm; const fam = GAME.state.comics.filter(c => c === base || c.variantOf === base.id);
+  const used = new Set(fam.map(c => c.variant || 'A')); let L = 'B'; while (used.has(L)) L = String.fromCharCode(L.charCodeAt(0) + 1);
+  const n = JSON.parse(JSON.stringify(cm, jsonStrip)); n.id = uid(); n.variantOf = base.id; n.variant = L; n.published = false; n.ver = 1; n.cover.id = uid();
+  n.price = Math.round((cm.price + 1) * 100) / 100; GAME.state.comics.push(n); return n;
+}
+function comicLabel(cm) { return cm.title + ' #' + cm.issue + (cm.variant ? ' (' + cm.variant + ')' : ''); }
+
+// ---------- cover editor ----------
+const CV = { sub: 'looks', sel: null, drag: null, tgt: 'c2', stTgt: 'col', textIdx: 0 };
+function coverEditOn() { const pg = CO.comic && curPage(); return !!(pg && pg.cover && CO.tab === 'page' && !CO.sketch); }
+function covObj(id) { const cv = coverDesign(CO.comic); if (!id) return null; if (id.startsWith('st')) return cv.stickers[+id.slice(2)] || null; return cv[id]; }
+function rotHit(b, px, py, pad = 0) { const a = -(b.r || 0) * D2R; const dx = px - b.x, dy = py - b.y; const lx = dx * Math.cos(a) - dy * Math.sin(a), ly = dx * Math.sin(a) + dy * Math.cos(a); return Math.abs(lx) <= b.w / 2 + pad && Math.abs(ly) <= b.h / 2 + pad; }
+function handlePos(b) { const a = (b.r || 0) * D2R; const hx = b.w / 2 + 10, hy = b.h / 2 + 10; return [b.x + hx * Math.cos(a) - hy * Math.sin(a), b.y + hx * Math.sin(a) + hy * Math.cos(a)]; }
+function drawCoverOverlay(c, out, x, y) {
+  const boxes = out.cov || []; c.save(); c.translate(x, y);
+  for (const b of boxes) { const on = b.id === CV.sel; c.save(); c.translate(b.x, b.y); c.rotate((b.r || 0) * D2R); c.lineWidth = on ? 5 : 2.5; c.strokeStyle = on ? TH.yellow : 'rgba(46,197,234,.9)'; c.setLineDash(on ? [] : [10, 8]);
+    if (on) { c.save(); c.lineWidth = 9; c.strokeStyle = TH.ink; c.strokeRect(-b.w / 2 - 6, -b.h / 2 - 6, b.w + 12, b.h + 12); c.restore(); } c.strokeRect(-b.w / 2 - 6, -b.h / 2 - 6, b.w + 12, b.h + 12); c.restore();
+    if (on) { const [hx, hy] = handlePos(b); c.fillStyle = TH.ink; c.beginPath(); c.arc(hx + 2, hy + 2, 17, 0, TAU); c.fill(); c.fillStyle = '#fff'; c.beginPath(); c.arc(hx, hy, 17, 0, TAU); c.fill(); c.lineWidth = 4; c.strokeStyle = TH.ink; c.stroke();
+      c.beginPath(); c.moveTo(hx - 7, hy - 7); c.lineTo(hx + 7, hy + 7); c.moveTo(hx + 7, hy + 7); c.lineTo(hx + 7, hy); c.moveTo(hx + 7, hy + 7); c.lineTo(hx, hy + 7); c.lineWidth = 3; c.stroke(); } }
+  c.restore();
+}
+function coverDown(px, py, w, h) {
+  const boxes = (CO.lastRender && CO.lastRender.cov) || []; const cur = boxes.find(b => b.id === CV.sel);
+  if (cur) { const [hx, hy] = handlePos(cur); if (Math.hypot(px - hx, py - hy) < 34) { const o = covObj(cur.id); coSnap(); CV.drag = { id: cur.id, mode: 'size', s0: o.s || 1, d0: Math.hypot(px - cur.x, py - cur.y) || 1, cx: cur.x, cy: cur.y, moved: false }; return; } }
+  let hit = null; for (let i = boxes.length - 1; i >= 0; i--) if (rotHit(boxes[i], px, py, 8)) { hit = boxes[i]; break; }
+  if (!hit) { if (CV.sel) { CV.sel = null; STUDIO.boardDirty = true; STUDIO.right.refresh(); } return; }
+  const o = covObj(hit.id); if (!o) return; if (CV.sel !== hit.id) { CV.sel = hit.id; if (hit.id.startsWith('st')) CV.sub = 'stickers'; else if (hit.id === 'title') CV.sub = CV.sub === 'looks' ? 'title' : CV.sub === 'stickers' ? 'items' : CV.sub; else if (CV.sub !== 'items') CV.sub = 'items'; STUDIO.right.refresh(); }
+  coSnap(); CV.drag = { id: hit.id, mode: 'move', ox: o.x, oy: o.y, sx: px, sy: py, moved: false }; STUDIO.boardDirty = true; AU.play('grab');
+}
+function coverMove(px, py, w, h) {
+  const D = CV.drag; if (!D) return; const o = covObj(D.id); if (!o) return;
+  if (D.mode === 'size') { const d = Math.hypot(px - D.cx, py - D.cy); o.s = clamp(D.s0 * d / D.d0, 0.3, 3); D.moved = true; STUDIO.boardDirty = true; return; }
+  if (!D.moved && Math.hypot(px - D.sx, py - D.sy) < 4) return; D.moved = true;
+  let nx = clamp(D.ox + (px - D.sx) / w, 0, 1), ny = clamp(D.oy + (py - D.sy) / h, 0, 1); if (Math.abs(nx - 0.5) < 0.012) nx = 0.5; o.x = nx; o.y = ny; STUDIO.boardDirty = true;
+}
+function coverUp() { const D = CV.drag; CV.drag = null; if (!D) return; if (D.moved) coChanged(); else CO.undo.pop(); STUDIO.right.refresh(); }
+
+const COVER_PREV = new Map();
+function coverPreview(cm, mod, key, w = 168, h = 252) { // small cover render with a modified design
+  const k = cm.id + ':' + (cm.ver || 0) + ':' + key + ':' + w; let cv = COVER_PREV.get(k); if (cv) return cv;
+  const clone = Object.assign({}, cm, { cov: JSON.parse(JSON.stringify(coverDesign(cm))) }); mod(clone.cov); cv = mkCanvas(w, h); const x = cv.getContext('2d');
+  renderPage(x, clone, cm.cover, w, h, { onLoad: () => { COVER_PREV.delete(k); STUDIO.right.refresh(); } }); x.lineWidth = 2; x.strokeStyle = TH.ink; x.strokeRect(1, 1, w - 2, h - 2);
+  COVER_PREV.set(k, cv); if (COVER_PREV.size > 40) COVER_PREV.delete(COVER_PREV.keys().next().value); return cv;
+}
+function cycle(list, cur, d = 1) { const i = Math.max(0, list.findIndex(q => q[0] === cur)); return list[(i + d + list.length) % list.length][0]; }
+function drawCoverTab(c, P, y0) {
+  const cm = CO.comic, pg = curPage(), cv = coverDesign(cm); const mod = (fn) => () => { coSnap(); fn(); coChanged(); };
+  const subs = [['looks', 'LOOKS'], ['title', 'TITLE'], ['items', 'ITEMS'], ['stickers', 'STICKERS'], ['shine', 'SHINE']];
+  subs.forEach(([k, n], i) => P.btn(22 + i * 118, y0 - 2, 110, 64, n, () => { CV.sub = k; STUDIO.right.refresh(); }, { id: 'cvs' + k, on: CV.sub === k, onCol: TH.blue, fs: n.length > 6 ? 19 : 22 }));
+  let y = y0 + 76;
+  if (CV.sub === 'looks') {
+    P.text('Tap a look — your art and stickers stay.', 34, y + 4, { s: 22, col: '#b9c3e6' }); y += 26;
+    COVER_TEMPLATES.forEach(([k, n, d], i) => { const tx = 30 + (i % 3) * 192, ty = y + Math.floor(i / 3) * 262, tw = 182, th = 252; const on = cv.tpl === k;
+      c.fillStyle = on ? TH.yellow : '#fff'; rr(c, tx, ty, tw, th, 12); c.fill(); c.lineWidth = 3; c.strokeStyle = TH.ink; c.stroke();
+      const pv = coverPreview(cm, q => applyCoverTemplate(q, k), 'tpl' + k, 132, 198); c.drawImage(pv, tx + 25, ty + 8, 132, 198);
+      P.text(n, tx + tw / 2, ty + 228, { s: 22, al: 'center', col: TH.ink, max: tw - 10 });
+      P.wl.push({ id: 'tpl' + k, x: tx, y: ty, w: tw, h: th, fn: mod(() => { applyCoverTemplate(cv, k); toast(n + ' look applied'); }) }); });
+    y += 3 * 262 + 6; P.btn(30, y, 570, 64, pg.titleBack ? 'TITLE: BEHIND YOUR ART' : 'TITLE: IN FRONT OF ART', mod(() => pg.titleBack = !pg.titleBack), { fs: 24 });
+    return;
+  }
+  if (CV.sub === 'title') {
+    const T = cv.title;
+    P.btn(30, y, 280, 64, 'EDIT TITLE', () => KB.open({ title: 'Comic title', text: cm.title, max: 28, live: t => { cm.title = t; STUDIO.boardDirty = true; }, done: t => { coSnap(); cm.title = t || cm.title; coChanged(); } }), { col: TH.green, fs: 26 });
+    P.btn(320, y, 280, 64, 'EDIT SERIES', () => KB.open({ title: 'Series name (small line)', text: cm.series || '', max: 28, done: t => { coSnap(); cm.series = t; coChanged(); } }), { fs: 26 });
+    y += 76; const FN = fontOf(T.font, 'bangers'); const fi = FONTS.indexOf(FN);
+    P.btn(30, y, 70, 64, '◀', mod(() => T.font = FONTS[(fi - 1 + FONTS.length) % FONTS.length].k), { fs: 24 }); c.fillStyle = '#fff'; rr(c, 108, y, 414, 64, 12); c.fill(); c.lineWidth = 3; c.strokeStyle = TH.ink; c.stroke();
+    c.fillStyle = TH.ink; c.textAlign = 'center'; c.textBaseline = 'middle'; c.font = `${FN.w}32px ${FN.f}`; c.fillText(FN.n.toUpperCase() + ' FONT', 315, y + 34, 390); c.textAlign = 'left'; P.btn(530, y, 70, 64, '▶', mod(() => T.font = FONTS[(fi + 1) % FONTS.length].k), { fs: 24 });
+    y += 76; const lab = (L, k) => (L.find(q => q[0] === k) || L[0])[1];
+    P.btn(30, y, 182, 64, 'FILL: ' + lab(TITLE_FILLS, T.fill), mod(() => T.fill = cycle(TITLE_FILLS, T.fill)), { fs: 19 }); P.btn(222, y, 182, 64, 'EFFECT: ' + lab(TITLE_FX, T.fx), mod(() => T.fx = cycle(TITLE_FX, T.fx)), { fs: 19 }); P.btn(414, y, 186, 64, 'SHAPE: ' + lab(TITLE_SHAPES, T.shape), mod(() => T.shape = cycle(TITLE_SHAPES, T.shape)), { fs: 19 });
+    y += 76; P.btn(30, y, 182, 64, lab(BAND_STYLES, cv.band.style), mod(() => cv.band.style = cycle(BAND_STYLES, cv.band.style)), { fs: 21, on: cv.band.style !== 'none', onCol: TH.blue });
+    P.btn(222, y, 84, 64, 'A−', mod(() => T.s = clamp(T.s - 0.1, 0.4, 2)), { fs: 24 }); P.btn(314, y, 90, 64, 'A+', mod(() => T.s = clamp(T.s + 0.1, 0.4, 2)), { fs: 24 });
+    P.btn(414, y, 90, 64, '↺', mod(() => T.r = (T.r || 0) - 4), { fs: 30 }); P.btn(510, y, 90, 64, '↻', mod(() => T.r = (T.r || 0) + 4), { fs: 30 });
+    y += 76; P.text('Outline', 34, y + 32, { s: 22, col: '#fff' }); P.btn(120, y, 70, 60, '−', mod(() => T.ow = clamp(+(T.ow - 0.25).toFixed(2), 0, 2.5)), { fs: 30 }); P.btn(196, y, 70, 60, '+', mod(() => T.ow = clamp(+(T.ow + 0.25).toFixed(2), 0, 2.5)), { fs: 30 });
+    P.btn(280, y, 320, 60, 'CENTER & STRAIGHTEN', mod(() => { T.x = 0.5; T.r = 0; }), { fs: 20 });
+    y += 72; const tg = [['c1', 'TOP'], ['c2', 'MAIN'], ['c3', T.fill === 'halftone' ? 'DOTS' : 'BOTTOM'], ['oc', 'OUTLINE'], ['fxc', 'EFFECT'], ['band', 'BAND']];
+    tg.forEach(([k, n], i) => P.btn(30 + i * 96, y, 90, 54, n, () => { CV.tgt = k; STUDIO.right.refresh(); }, { id: 'tg' + k, on: CV.tgt === k, onCol: TH.blue, fs: n.length > 5 ? 15 : 18 }));
+    y += 64; const getC = () => CV.tgt === 'band' ? cv.band.col : T[CV.tgt]; const setC = col => { if (CV.tgt === 'band') { cv.band.col = col; if (cv.band.style === 'none') cv.band.style = 'bar'; } else { T[CV.tgt] = col; if ((CV.tgt === 'c1' || CV.tgt === 'c3') && T.fill !== 'grad' && T.fill !== 'halftone') T.fill = 'grad'; } };
+    COV_COLS.forEach((col, i) => swatch(c, P, 30 + (i % 6) * 96, y + Math.floor(i / 6) * 84, 74, col, getC() === col, mod(() => setC(col)), 'tcv' + i));
+    y += 176; P.text(T.fill === 'chrome' || T.fill === 'rainbow' || T.fill === 'gold' ? 'This fill has its own colors — try GRADIENT or SOLID to use yours.' : 'Drag the title on the cover to move it.', 34, y, { s: 19, col: '#b9c3e6', max: 560 });
+    return;
+  }
+  if (CV.sub === 'items') {
+    P.text('Drag anything on the cover to move it.', 34, y + 4, { s: 21, col: '#b9c3e6' }); y += 28;
+    for (const [id, n] of COV_ITEMS) { const it = cv[id]; const on = CV.sel === id;
+      c.fillStyle = on ? 'rgba(255,210,63,.25)' : 'rgba(255,255,255,.08)'; rr(c, 24, y - 4, 584, 74, 12); c.fill();
+      P.wl.push({ id: 'cvi' + id, x: 24, y: y - 4, w: 150, h: 74, fn: () => { CV.sel = id; STUDIO.boardDirty = true; STUDIO.right.refresh(); } });
+      P.text(n, 34, y + 33, { s: 22, col: on ? TH.yellow : '#fff', max: 140 });
+      P.btn(178, y, 104, 64, it.hide ? 'HIDDEN' : 'SHOWN', mod(() => { it.hide = !it.hide; if (it.hide && CV.sel === id) CV.sel = null; }), { id: 'cvh' + id, on: !it.hide, onCol: TH.green, fs: 20 });
+      const ST = COV_STYLES[id]; P.btn(290, y, 150, 64, ST ? (ST.find(q => q[0] === it.style) || ST[0])[1] : '—', mod(() => it.style = cycle(ST, it.style)), { id: 'cvst' + id, dis: !ST || it.hide, fs: 20 });
+      P.btn(448, y, 74, 64, '−', mod(() => it.s = clamp((it.s || 1) - 0.15, 0.3, 3)), { id: 'cvm' + id, dis: it.hide, fs: 30 }); P.btn(528, y, 74, 64, '+', mod(() => it.s = clamp((it.s || 1) + 0.15, 0.3, 3)), { id: 'cvp' + id, dis: it.hide, fs: 30 });
+      y += 80; }
+    y += 4; const L = GAME.state.logo;
+    P.btn(30, y, 280, 66, L ? 'EDIT MY LOGO' : 'DRAW MY LOGO', () => startSketch('logo', L ? { name: 'Logo', img: L.img } : null), { col: TH.green, fs: 24 });
+    P.btn(320, y, 280, 66, 'RESET POSITIONS', () => confirmBox('Put every cover item back where this look starts?', mod(() => { const t = cv.tpl; const st = cv.stickers, fin = cv.finish, ti = Object.assign({}, cv.title), bd = Object.assign({}, cv.band); applyCoverTemplate(cv, t); Object.assign(cv.title, ti, { x: cv.title.x, y: cv.title.y, s: cv.title.s, r: cv.title.r }); cv.band = bd; cv.stickers = st; cv.finish = fin; })), { fs: 22 });
+    y += 78; P.btn(30, y, 570, 62, 'ADD A PAGE AFTER COVER', () => addPage(-1), { fs: 24 });
+    return;
+  }
+  if (CV.sub === 'stickers') {
+    P.text('Tap to stick one on. Drag it on the cover.', 34, y + 4, { s: 21, col: '#b9c3e6' }); y += 26;
+    STICKER_TYPES.forEach(([k, n, t0, col, tc], i) => { const tx = 30 + (i % 3) * 192, ty = y + Math.floor(i / 3) * 112, tw = 182, th = 104;
+      c.fillStyle = '#fff'; rr(c, tx, ty, tw, th, 12); c.fill(); c.lineWidth = 3; c.strokeStyle = TH.ink; c.stroke();
+      c.save(); c.beginPath(); c.rect(tx + 4, ty + 4, tw - 8, th - 34); c.clip(); drawSticker(c, { k, text: k === 'strip' ? 'WOW!' : t0.split(' ')[0], x: (tx + tw / 2) / 300, y: (ty + 38) / 300, s: k === 'strip' ? 0.5 : 0.95, col, tc }, 300, 300); c.restore();
+      P.text(n, tx + tw / 2, ty + th - 16, { s: 19, al: 'center', col: TH.ink });
+      P.wl.push({ id: 'stk' + k, x: tx, y: ty, w: tw, h: th, fn: mod(() => { cv.stickers.push({ k, text: t0, x: k === 'corner' ? 0.86 : k === 'strip' ? 0.5 : 0.5 + (Math.random() - 0.5) * 0.2, y: k === 'corner' ? 0.14 : k === 'strip' ? 0.9 : 0.45 + (Math.random() - 0.5) * 0.2, s: 1, r: k === 'burst' || k === 'stamp' ? -10 : k === 'tag' ? 8 : 0, col, tc }); CV.sel = 'st' + (cv.stickers.length - 1); AU.play('pop'); }) }); });
+    y += 3 * 112 + 4; const st = CV.sel && CV.sel.startsWith('st') ? cv.stickers[+CV.sel.slice(2)] : null;
+    if (!st) { P.text(cv.stickers.length ? 'Tap a sticker on the cover to change it.' : 'No stickers yet.', 34, y + 24, { s: 22, col: '#fff' }); return; }
+    P.btn(30, y, 280, 62, 'TYPE TEXT', () => KB.open({ title: 'Sticker text', text: st.text, max: 32, live: t => { st.text = t; STUDIO.boardDirty = true; }, done: t => { coSnap(); st.text = t || st.text; coChanged(); } }), { col: TH.green, fs: 24 });
+    P.btn(320, y, 280, 62, 'TEXT IDEAS ▶', mod(() => { CV.textIdx = (CV.textIdx + 1) % STICKER_TEXTS.length; st.text = STICKER_TEXTS[CV.textIdx]; }), { fs: 22 });
+    y += 72; P.btn(30, y, 116, 56, 'COLOR', () => { CV.stTgt = 'col'; STUDIO.right.refresh(); }, { on: CV.stTgt === 'col', onCol: TH.blue, fs: 19 }); P.btn(152, y, 116, 56, 'TEXT', () => { CV.stTgt = 'tc'; STUDIO.right.refresh(); }, { on: CV.stTgt === 'tc', onCol: TH.blue, fs: 19 });
+    P.btn(280, y, 76, 56, '−', mod(() => st.s = clamp(st.s - 0.15, 0.3, 3)), { fs: 28 }); P.btn(362, y, 76, 56, '+', mod(() => st.s = clamp(st.s + 0.15, 0.3, 3)), { fs: 28 });
+    P.btn(444, y, 76, 56, '↺', mod(() => st.r = (st.r || 0) - 8), { fs: 26 }); P.btn(526, y, 76, 56, '↻', mod(() => st.r = (st.r || 0) + 8), { fs: 26 });
+    y += 66; COV_COLS.forEach((col, i) => swatch(c, P, 30 + (i % 6) * 96, y + Math.floor(i / 6) * 80, 70, col, st[CV.stTgt] === col, mod(() => st[CV.stTgt] = col), 'stc' + i));
+    y += 166; const si = +CV.sel.slice(2);
+    P.btn(30, y, 182, 60, 'TO FRONT', mod(() => { cv.stickers.push(cv.stickers.splice(si, 1)[0]); CV.sel = 'st' + (cv.stickers.length - 1); }), { fs: 22, dis: si === cv.stickers.length - 1 });
+    P.btn(222, y, 182, 60, 'COPY', mod(() => { const n = Object.assign({}, st, { x: clamp(st.x + 0.05, 0, 1), y: clamp(st.y + 0.04, 0, 1) }); cv.stickers.push(n); CV.sel = 'st' + (cv.stickers.length - 1); }), { fs: 22 });
+    P.btn(414, y, 186, 60, 'DELETE', mod(() => { cv.stickers.splice(si, 1); CV.sel = null; }), { col: '#ffb3b0', fs: 22 });
+    return;
+  }
+  // shine
+  P.text('Finish', 34, y + 6, { s: 26, col: '#fff', title: 1 }); P.text('Shiny covers catch eyes — collectors pay more!', 130, y + 8, { s: 19, col: '#b9c3e6' }); y += 30;
+  FINISHES.forEach(([k, n], i) => { const tx = 30 + i * 144, tw = 136, th = 236; const on = (cv.finish || 'none') === k;
+    c.fillStyle = on ? TH.yellow : '#fff'; rr(c, tx, y, tw, th, 12); c.fill(); c.lineWidth = 3; c.strokeStyle = TH.ink; c.stroke();
+    const pv = coverPreview(cm, q => q.finish = k, 'fin' + k, 120, 180); c.drawImage(pv, tx + 8, y + 8, 120, 180); P.text(n, tx + tw / 2, y + 212, { s: 18, al: 'center', col: TH.ink, max: tw - 8 });
+    P.wl.push({ id: 'fin' + k, x: tx, y, w: tw, h: th, fn: mod(() => { cv.finish = k; if (k !== 'none') AU.play('chirp'); }) }); });
+  y += 250; c.fillStyle = 'rgba(255,255,255,.1)'; rr(c, 24, y, 584, 2, 1); c.fill(); y += 14;
+  P.text('Variant covers', 34, y + 16, { s: 26, col: '#fff', title: 1 }); P.text('Same story, a new cover. Fans love them!', 34, y + 52, { s: 19, col: '#b9c3e6' }); y += 74;
+  const base = cm.variantOf ? (comicById(cm.variantOf) || cm) : cm; const fam = [base].concat(GAME.state.comics.filter(q => q.variantOf === base.id));
+  fam.slice(0, 5).forEach((q, i) => { const on = q === cm; const tx = 30 + i * 116; c.fillStyle = on ? TH.yellow : '#fff'; rr(c, tx, y, 108, 190, 10); c.fill(); c.lineWidth = 3; c.strokeStyle = TH.ink; c.stroke();
+    const pv = coverPreview(q, () => { }, 'self', 92, 138); c.drawImage(pv, tx + 8, y + 8, 92, 138); P.text(q.variant ? 'COVER ' + q.variant : 'COVER A', tx + 54, y + 168, { s: 17, al: 'center', col: TH.ink });
+    P.wl.push({ id: 'var' + i, x: tx, y, w: 108, h: 190, fn: () => { if (q !== cm) { openComic(q); CO.page = -1; CO.tab = 'page'; CV.sub = 'shine'; STUDIO.boardDirty = true; [STUDIO.left, STUDIO.right].forEach(p => p.refresh()); } } }); });
+  y += 204; P.btn(30, y, 570, 72, '+ MAKE A VARIANT COVER', () => { const n = makeVariant(cm); openComic(n); CO.page = -1; CO.tab = 'page'; CV.sub = 'looks'; CV.sel = null; STUDIO.boardDirty = true; [STUDIO.left, STUDIO.right].forEach(p => p.refresh()); toast('Cover ' + n.variant + ' created — give it a new look, then publish!', TH.green); saveSoon(); }, { col: TH.green, title: 1, fs: 32, dis: fam.length >= 5 });
 }
 
 }
